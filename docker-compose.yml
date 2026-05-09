@@ -1,0 +1,82 @@
+version: "3.8"
+
+# После `docker-compose up -d`, проверь связность:
+#   docker compose exec ipfs-bootstrap ipfs swarm peers
+# Должно быть 2+ peer ID. Если пусто — подожди 10 сек и повтори.
+# Если relay не стартует — проверь версию Docker Compose (нужна v2+).
+
+services:
+  # === Bootstrap relay — IPFS daemon ===
+  ipfs-bootstrap:
+    image: ipfs/kubo:v0.29.0
+    container_name: mesh-bootstrap
+    ports:
+      - "4001:4001"
+      - "5001:5001"
+    environment:
+      - IPFS_PROFILE=server
+    volumes:
+      - ipfs-data:/data/ipfs
+    command: >
+      sh -c "
+        ipfs init --profile server 2>/dev/null;
+        ipfs config --json Experimental.Libp2pStreamMounting true;
+        ipfs config --json Swarm.EnableRelayHop true;
+        ipfs config --json Addresses.Gateway '\"\"';
+        ipfs daemon --enable-pubsub-experiment
+      "
+    healthcheck:
+      test: ["CMD", "ipfs", "id", "-f", "<id>"]
+      interval: 5s
+      retries: 10
+      start_period: 10s
+
+  # === Agent 1 — Listener ===
+  agent-listener:
+    build: .
+    container_name: mesh-listener
+    depends_on:
+      ipfs-bootstrap:
+        condition: service_healthy
+    environment:
+      - AGENT_ID=listener
+      - AGENT_CAP=ping
+      - MODE=listener
+      - RELAY_HOST=ipfs-bootstrap
+    networks:
+      - mesh-net
+
+  # === Agent 2 — Publisher ===
+  agent-publisher:
+    build: .
+    container_name: mesh-publisher
+    depends_on:
+      - agent-listener
+    environment:
+      - AGENT_ID=publisher
+      - AGENT_CAP=ping
+      - MODE=publisher
+      - RELAY_HOST=ipfs-bootstrap
+    networks:
+      - mesh-net
+
+  # === Agent 3 — LangGraph Demo ===
+  agent-langgraph:
+    build: .
+    container_name: mesh-langgraph
+    depends_on:
+      - agent-listener
+    environment:
+      - AGENT_ID=lg-demo
+      - AGENT_CAP=crypto_analysis
+      - MODE=listener
+      - RELAY_HOST=ipfs-bootstrap
+    networks:
+      - mesh-net
+
+networks:
+  mesh-net:
+    driver: bridge
+
+volumes:
+  ipfs-data:
