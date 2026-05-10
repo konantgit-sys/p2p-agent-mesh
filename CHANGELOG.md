@@ -1,5 +1,23 @@
 # Changelog
 
+## [v0.4.1-alpha] - 2026-05-10
+### Added
+- **NAT Traversal via Relay**: публичный relay-узел для агентов за NAT
+- `relay/server.py` — relay TCP сервер (handshake + registry + forward)
+- `relay/client.py` — relay клиент (E2E key exchange + encrypted send/recv)
+- `relay/SPEC.md` — спецификация протокола (6 типов сообщений)
+- **E2E через relay**: X25519 ECDH + HKDF (совпадает с handshake.py)
+- 10 новых тестов relay
+
+### Security
+- Relay не видит контент: сквозное шифрование между агентами
+- E2E ключи: эфемерные X25519 (Perfect Forward Secrecy)
+- Relay видит только pubkey агента (публичная информация)
+
+### Known Limits (v0.4)
+- 📦 Base64 payload encoding: ~33% overhead
+- 🔁 Deduplication handled client-side (`msg_id` cache)
+
 ## [v0.4.0-alpha] - 2026-05-10
 ### Added
 - **Secure Mesh**: сквозное шифрование ChaCha20-Poly1305 поверх TCP (issue #4)
