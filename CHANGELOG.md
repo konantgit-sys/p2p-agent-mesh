@@ -12,7 +12,7 @@
 ### Changed
 - `P2PTransport.__init__()`: новые параметры `identity`, `use_tls`
 - `P2PTransport` расширен до ~444 строк (+71), zero new runtime deps
-- Test suite: 36 → 44 тестов
+- Test suite: 28 → 36 тестов
 - `MESH_TLS=1` env — включает шифрование
 
 ### Security
