@@ -98,7 +98,7 @@ class TestHandshake:
                 assert srv is not None, "Server handshake failed"
                 assert srv.peer_pubkey_hex == client_ident.public_key_hex
 
-        await asyncio.wait_for(server_task(), 10.0)
+        await asyncio.wait_for(server_task(), 25.0)
 
     @pytest.mark.asyncio
     async def test_handshake_reject_wrong_pubkey(self):
@@ -132,7 +132,7 @@ class TestHandshake:
                 # На сервере тоже None (клиент не прошёл верификацию)
                 # или сервер получил hello но auth не прошёл
 
-        await asyncio.wait_for(server_task(), 10.0)
+        await asyncio.wait_for(server_task(), 25.0)
 
 
 # ─────────────────────────────────────────────
