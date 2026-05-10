@@ -1,169 +1,144 @@
 # P2P Agent Mesh — Quickstart
 
-Запуск 3-узловой mesh-сети на одном сервере за 5 минут.
+Запуск 3-узловой mesh-сети за минуту. Zero внешних зависимостей.
 
-> ⚠️ Docker Compose tested on: Linux (Ubuntu 22.04), macOS (Docker Desktop 4.25+).
-> Если возникают проблемы — используй bare-metal вариант ниже и сообщи окружение в issues.
-
-## Требования
-- Docker + docker-compose
-- Или Python 3.11+ и запущенный IPFS daemon
-
-## Вариант A: Docker Compose (рекомендуется)
-
-```yaml
-# docker-compose.yml
-version: "3.9"
-services:
-  ipfs:
-    image: ipfs/kubo:latest
-    command: daemon --enable-pubsub-experiment --routing=dht
-    environment:
-      - IPFS_PROFILE=server
-    ports:
-      - "4001:4001/tcp"
-      - "4001:4001/udp"
-      - "5001:5001"
-      - "8080:8080"
-    volumes:
-      - ipfs_data:/data/ipfs
-
-  agent-forecaster:
-    build: .
-    depends_on: [ipfs]
-    command: python -c "
-import asyncio
-from sdk.agent import AgentMesh
-async def run():
-    a = AgentMesh('forecaster', ['forecast', 'signal'])
-    await a.start()
-    print(f'forecaster ready: {a.did}')
-    await asyncio.sleep(3600)
-asyncio.run(run())
-"
-    environment:
-      - IPFS_PATH=/data/ipfs
-      - P2P_MESH_DB=/data/p2p_mesh.db
-    volumes:
-      - ./:/app
-
-  agent-cryter:
-    build: .
-    depends_on: [ipfs]
-    command: python -c "
-import asyncio
-from sdk.agent import AgentMesh
-async def run():
-    a = AgentMesh('cryter', ['listen', 'analysis'])
-    await a.start()
-    await a.listen({'capability': 'signal'}, lambda m: print(f'cryter got: {m[\"payload\"]}'))
-    await asyncio.sleep(3600)
-asyncio.run(run())
-"
-    environment:
-      - IPFS_PATH=/data/ipfs
-      - P2P_MESH_DB=/data/p2p_cryter.db
-    volumes:
-      - ./:/app
-
-  agent-creator:
-    build: .
-    depends_on: [ipfs]
-    command: python -c "
-import asyncio
-from sdk.agent import AgentMesh
-async def run():
-    a = AgentMesh('creator', ['content'])
-    await a.start()
-    await a.listen({'capability': 'analysis'}, lambda m: print(f'creator got: {m[\"payload\"]}'))
-    await asyncio.sleep(3600)
-asyncio.run(run())
-"
-    environment:
-      - IPFS_PATH=/data/ipfs
-      - P2P_MESH_DB=/data/p2p_creator.db
-    volumes:
-      - ./:/app
-
-volumes:
-  ipfs_data:
-```
-
-```dockerfile
-# Dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY . .
-RUN pip install --no-cache-dir -r requirements.txt
-```
+## Быстрый старт (все в одном процессе)
 
 ```bash
-# requirements.txt
-# (Библиотек не требуется — только стандартная + cryptography)
-cryptography>=41.0.0
-```
-
-**Запуск:**
-```bash
-docker compose up -d
-docker compose logs -f agent-cryter
-# В другом терминале:
-docker compose exec agent-forecaster python -c "
-import asyncio
-from sdk.agent import AgentMesh
-async def run():
-    a = AgentMesh('cli', ['test'])
-    await a.start()
-    await a.emit('signal', {'coin': 'BTC', 'action': 'BUY', 'conf': 0.85})
-    await asyncio.sleep(1)
-asyncio.run(run())
-"
-# В логах cryter: 'cryter got: {"coin": "BTC", "action": "BUY", "conf": 0.85}'
-```
-
-## Вариант B: Bare metal (3 команды)
-
-```bash
-# 1. Установить IPFS (kubo v0.29+)
-wget -qO- https://dist.ipfs.tech/kubo/v0.29.0/kubo_v0.29.0_linux-amd64.tar.gz | tar xz
-cd kubo && sudo bash install.sh && cd .. && rm -rf kubo
-ipfs init
-ipfs config --json Experimental.Libp2pStreamMounting true
-ipfs config --json Addresses.Gateway '""'  # если порт 8080 занят
-
-# 2. Запустить демон
-ipfs daemon --enable-pubsub-experiment &
-
-# 3. Установить зависимости
 pip install cryptography
-
-# 4. Запустить 2 агента
-# Терминал 1:
 python -c "
 import asyncio
 from sdk.agent import AgentMesh
-async def run():
-    a = AgentMesh('listener', ['echo'])
-    await a.start()
-    print(f'Слушаю, DID: {a.did}')
-    await a.listen({'capability': 'echo'}, lambda m: print(f'Получено: {m[\"payload\"]}'))
-    await asyncio.sleep(3600)
-asyncio.run(run())
-"
 
-# Терминал 2:
-python -c "
-import asyncio
-from sdk.agent import AgentMesh
 async def run():
-    a = AgentMesh('publisher', ['echo'])
+    a = AgentMesh('agent_a', ['ping'])
     await a.start()
-    await a.emit('echo', {'msg': 'hello from phase1!'})
-    print('Отправлено')
-    await asyncio.sleep(1)
+    print(f'Готов. DID: {a.did}')
+    await a.stop()
+
 asyncio.run(run())
 "
 ```
+
+Работает без IPFS, без Docker, без внешних сервисов.
+
+## 2 агента (один процесс)
+
+```bash
+python -c "
+import asyncio
+from sdk.agent import AgentMesh
+
+async def run():
+    a = AgentMesh('publisher', ['ping'])
+    b = AgentMesh('listener', ['listen'])
+    await a.start()
+    await b.start()
+
+    def callback(msg):
+        print(f'Получено: {msg[\"payload\"]}')
+
+    await b.listen({'capability': 'ping'}, callback)
+    await asyncio.sleep(0.1)
+    await a.emit('ping', {'msg': 'hello from publisher!'})
+    await asyncio.sleep(0.3)
+    await a.stop()
+    await b.stop()
+
+asyncio.run(run())
+"
+```
+
+## 🌐 Multi-container / Multi-machine (TCP transport)
+
+Zero dependencies. Works across Docker containers, VMs, or LAN.
+
+**Terminal 1 (Listener)**
+```bash
+python -c "
+import asyncio
+from sdk.agent import AgentMesh
+
+async def run():
+    a = AgentMesh('listener', ['ping'])
+    await a.start()
+    await a.listen({'capability': 'ping'}, lambda m: print(f'GOT: {m[\"payload\"]}'))
+    await asyncio.sleep(3600)
+
+asyncio.run(run())
+"
+```
+
+**Terminal 2 (Publisher)**
+```bash
+python -c "
+import asyncio
+from sdk.agent import AgentMesh
+# замени 127.0.0.1 на IP listener'а и реальный port (из лога listener: TCP: 127.0.0.1:XXXXX)
+a = AgentMesh('publisher', ['ping'],
+              bootstrap_peers=['listener@127.0.0.1:XXXXX'])
+async def run():
+    await a.start()
+    await a.emit('ping', {'msg': 'hello via tcp'})
+    await asyncio.sleep(2)
+
+asyncio.run(run())
+"
+```
+
+💡 **Tip:** Replace `127.0.0.1` with actual LAN/VPC IP for cross-machine.
+
+## Демо: 3-агентная mesh
+
+```python
+# examples/3_agent_signal_mesh.py
+import asyncio
+from sdk.agent import AgentMesh
+
+async def main():
+    # Создаём 3 агента в одном процессе
+    agent_a = AgentMesh("agent_a", ["signal"])
+    agent_b = AgentMesh("agent_b", ["listen", "analysis"])
+    agent_c = AgentMesh("agent_c", ["listen", "content"])
+
+    await agent_a.start()
+    await agent_b.start()
+    await agent_c.start()
+
+    # Подписка
+    await agent_b.listen({"capability": "signal"}, lambda m: print(f"[B] {m['payload']}"))
+    await agent_c.listen({"capability": "analysis"}, lambda m: print(f"[C] {m['payload']}"))
+
+    await asyncio.sleep(0.1)
+
+    # A отправляет signal → B получает
+    await agent_a.emit("signal", {"action": "BUY", "conf": 0.85})
+    await asyncio.sleep(0.3)
+
+    await agent_a.stop()
+    await agent_b.stop()
+    await agent_c.stop()
+
+asyncio.run(main())
+```
+
+## Под капотом
+
+```
+P2PTransport
+├── in-memory _bus          ← same-process (Python dict + asyncio.Lock)
+└── TCP слой                ← cross-machine (asyncio.start_server)
+    ├── JSON lines протокол
+    ├── base64 payload
+    ├── exponential backoff reconnect (1→30s)
+    └── zero external deps
+```
+
+### Известные ограничения v0.3
+- 🔓 Нет шифрования трафика (trusted networks / VPC)
+- 🌐 Нет NAT traversal (требуется прямой IP:port)
+- 📦 Base64 payload ~33% overhead (msgpack/protobuf в v0.4)
+- 🔁 Дедупликация на стороне клиента (msg_id cache)
 
 ## Проверка
 
@@ -175,28 +150,21 @@ from sdk.agent import AgentMesh
 async def test():
     a = AgentMesh("test_node", ["ping"])
     await a.start()
-    print(f"✅ IPFS connected, peer_id: {a.transport.peer_id[:20]}...")
-    print(f"✅ DID: {a.did}")
+    print(f"✅ Started, DID: {a.did[:24]}...")
     peers = await a.transport.peers()
-    print(f"✅ Peers in network: {len(peers)}")
+    print(f"✅ Peers: {len(peers)}")
+    status = a.status()
+    print(f"✅ WAL messages: {status['wal_count']}")
     await a.stop()
 
 asyncio.run(test())
-```
-```bash
-python test_connection.py
-# Output:
-# ✅ IPFS connected, peer_id: 12D3KooWFzSEd...
-# ✅ DID: did:snin:...
-# ✅ Peers in network: 22
 ```
 
 ## Troubleshooting
 
 | Проблема | Причина | Решение |
 |----------|---------|---------|
-| `IPFS daemon not running` | IPFS не запущен | `ipfs daemon --enable-pubsub-experiment &` |
-| Сообщение не получено | Gossipsub не успел разослать | Увеличь sleep до 3-5 сек после publish |
-| DHT пустой | Late-joiner не получил метаданные | Реализован auto-republish при получении любого DHT-сообщения |
-| WAL не replay | Нет newline в publish | transport.py добавляет `\n` автоматически |
-| `Event loop is closed` (warning) | cleanup pytest-asyncio | Безвредно, не влияет на работу |
+| TCP пир не виден | bootstrap_peers не указан в конструкторе | Добавить `bootstrap_peers=['node_id@host:port']` |
+| Сообщение не получено | Разные топики / разные capability | Проверить что `emit()` и `listen()` используют одно capability |
+| DHT пустой | Late-joiner не получил метаданные | Реализован auto-republish при получении DHT-сообщения |
+| Connection refused | Пир ещё не запущен | Exponential backoff retry (1→30 сек) |
