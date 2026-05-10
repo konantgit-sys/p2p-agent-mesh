@@ -118,16 +118,33 @@ DEPLOYED
   Live demo: https://p2p-dash.v2.site
 
 ═══════════════════════════════════════════════════════════════
-СТРУКТУРА ДЛЯ GITHUB
+LESSONS LEARNED (2026-05-10)
+═══════════════════════════════════════════════════════════════
+
+  v0.2.0 доказала: схема (WAL + подписи + DHT + emit/listen) работает.
+  Но IPFS CLI как транспорт — тупик для production:
+    - 200-500 MB RAM на daemon
+    - ~20 msg/s пропускная способность
+    - Зависимость от внешнего бинарника
+    - Daemon crash = агент молчит
+
+  v0.3: переписать transport.py с нуля. Свой лёгкий P2P транспорт.
+  API AgentMesh не меняется. Меняется только transport.py под капотом.
+  Полный roadmap: docs/ROADMAP.md
+
+═══════════════════════════════════════════════════════════════
+СТРУКТУРА (v0.2.0)
 ═══════════════════════════════════════════════════════════════
 
   p2p-agent-mesh/
-  ├── core/           # Phase 0 (сейчас: mesh.py — prototype)
-  ├── sdk/            # Phase 1 (сейчас: agent.py — prototype)
-  ├── adapters/       # Phase 2 (сейчас: langgraph + crewai)
+  ├── phase0/         # Core Transport (IPFS PubSub + WAL + DHT + identity)
+  ├── phase1/         # Agent SDK (emit/listen/query/request)
+  ├── adapters/       # LangGraph + CrewAI
+  ├── sdk/            # AgentMesh публичный API
   ├── examples/       # рабочие примеры
-  ├── tests/          # тесты
-  ├── docs/           # документация
+  ├── tests/          # нагрузочные тесты
+  ├── docs/           # документация + roadmap
+  ├── docker/         # Docker entrypoint для compose
   ├── README.md       # описалово
   ├── LICENSE
   ├── .gitignore

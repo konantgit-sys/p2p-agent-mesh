@@ -1,9 +1,9 @@
-"""Phase 0 — Transport test: реальный IPFS PubSub между двумя узлами."""
+"""Phase 0 — Transport test: P2P pub/sub через глобальный relay."""
 
 import asyncio
 import json
 import pytest
-from phase0.transport import IPFSTransport
+from phase0.transport import P2PTransport
 
 
 @pytest.mark.asyncio
@@ -13,7 +13,7 @@ async def test_transport_pubsub_local():
     2. Опубликовать сообщение в тот же топик
     3. Получить через callback (gossip на localhost)
     """
-    transport = IPFSTransport()
+    transport = P2PTransport()
     peer_id = await transport.start()
     assert peer_id
 
@@ -24,13 +24,13 @@ async def test_transport_pubsub_local():
         received.append(data)
 
     await transport.subscribe(topic, on_message)
-    # Ждём установки подписки (gossipsub handshake)
-    await asyncio.sleep(2)
+    # Ждём установки подписки
+    await asyncio.sleep(0.2)
 
     msg = json.dumps({"hello": "from_phase0", "ts": asyncio.get_event_loop().time()}).encode()
     await transport.publish(topic, msg)
-    # Ждём gossip propagation
-    await asyncio.sleep(3)
+    # Ждём propagation
+    await asyncio.sleep(0.3)
 
     await transport.unsubscribe(topic)
     await transport.stop()
@@ -46,7 +46,7 @@ async def test_transport_pubsub_local():
 @pytest.mark.asyncio
 async def test_transport_pubsub_two_topics():
     """Подписка на два топика, публикация в оба."""
-    transport = IPFSTransport()
+    transport = P2PTransport()
     await transport.start()
     received = {1: [], 2: []}
 
@@ -57,11 +57,11 @@ async def test_transport_pubsub_two_topics():
 
     await transport.subscribe("t1-" + transport.peer_id[-4:], make_cb(1))
     await transport.subscribe("t2-" + transport.peer_id[-4:], make_cb(2))
-    await asyncio.sleep(2)
+    await asyncio.sleep(0.2)
 
     await transport.publish("t1-" + transport.peer_id[-4:], b"msg_1")
     await transport.publish("t2-" + transport.peer_id[-4:], b"msg_2")
-    await asyncio.sleep(3)
+    await asyncio.sleep(0.3)
 
     for k, v in received.items():
         print(f"  topic {k}: {len(v)} сообщений")
@@ -75,7 +75,7 @@ async def test_transport_pubsub_two_topics():
 @pytest.mark.asyncio
 async def test_transport_peers():
     """Проверка pubsub peers — должны видеть других пиров."""
-    transport = IPFSTransport()
+    transport = P2PTransport()
     await transport.start()
 
     peers = await transport.peers()

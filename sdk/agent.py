@@ -10,7 +10,7 @@ import time
 import hashlib
 from typing import Callable, Optional
 
-from phase0.transport import IPFSTransport
+from phase0.transport import P2PTransport
 from phase0.wal import WALBuffer
 from phase0.identity import Identity
 from phase0.sig_gate import SigGate
@@ -75,7 +75,7 @@ class AgentMesh:
         self.agent_id = agent_id
         self.capabilities = capabilities
         self.identity = identity or Identity()
-        self.transport = IPFSTransport()
+        self.transport = P2PTransport(node_id=agent_id)
         self.wal = WALBuffer(
             db_path or f"/tmp/p2p_mesh_{agent_id}.db"
         )
@@ -85,6 +85,7 @@ class AgentMesh:
         self._subscribed_topics: set[str] = set()
         self._running = False
         self._last_msg_id: Optional[str] = None
+        self._last_dht_repub: float = 0  # cooldown для DHT republish
 
     async def start(self) -> str:
         """Подключиться к IPFS, подписаться на DHT, зарегистрироваться."""
@@ -99,8 +100,6 @@ class AgentMesh:
         self._subscribed_topics.add(self.dht.get_topic())
 
         # Публикация своего профиля в DHT
-        # Ждём 1 сек чтобы subscribe успел установиться
-        await asyncio.sleep(1)
         await self._publish_metadata()
         # Републикация каждые 60 сек для DHT convergence
         self._dht_repub_task = asyncio.create_task(self._dht_republish_loop())
@@ -141,7 +140,7 @@ class AgentMesh:
         При получении от незнакомого пира — републикует свои метаданные.
         Это компенсирует отсутствие истории в gossipsub (late-joiners).
         """
-        import json
+        import json, time
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
@@ -153,9 +152,11 @@ class AgentMesh:
             # Если это не наше сообщение — реплицируем
             if sender_did != self.identity.did:
                 self.dht.handle_message(checked)
-                # Republish свои метаданные для late-joiners
-                # Не await — запускаем fire-and-forget
-                asyncio.create_task(self._publish_metadata())
+                # Republish свои метаданные для late-joiners (с cooldown)
+                now = time.time()
+                if now - self._last_dht_repub > 1.0:
+                    self._last_dht_repub = now
+                    asyncio.create_task(self._publish_metadata())
 
     def _route_message(self, topic: str, data: bytes):
         """Принять сырое сообщение из транспорта, проверить, разослать подписчикам.

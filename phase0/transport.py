@@ -2,6 +2,7 @@
 
 Same-process: глобальный relay для обмена между инстансами.
 Multi-process: TCP соединения между узлами (JSON lines over TCP).
+v0.4: опциональное шифрование ChaCha20-Poly1305 (MESH_TLS=1).
 
 API совместим с IPFSTransport — AgentMesh не требует изменений.
 """
@@ -15,9 +16,16 @@ import uuid
 from typing import Callable, Optional
 from collections.abc import Callable as CallableABC
 
+from phase0.identity import Identity
+from phase0.handshake import (
+    SecureSession,
+    server_handshake,
+    client_handshake,
+    is_encrypted_envelope,
+)
+
 
 # === Внутренний message bus для same-process pub/sub ===
-# topic -> [(subscriber_id, callback)]
 _bus: dict[str, list[tuple[str, Callable]]] = {}
 _bus_lock = asyncio.Lock()
 
@@ -29,15 +37,21 @@ class P2PTransport:
     1. In-memory _bus — обмен между инстансами в одном процессе
     2. TCP — обмен между процессами/машинами (JSON lines, base64 payload)
 
-    API: start/stop/publish/subscribe/unsubscribe/peers — как у IPFSTransport.
+    Опционально: TLS-шифрование (MESH_TLS=1).
     """
 
     def __init__(self, node_id: Optional[str] = None,
-                 bootstrap_peers: Optional[list[str]] = None):
+                 bootstrap_peers: Optional[list[str]] = None,
+                 identity: Optional[Identity] = None,
+                 use_tls: bool = False):
         self.node_id = node_id or f"node_{uuid.uuid4().hex[:8]}"
         self._subscribed_topics: set[str] = set()
         self._running = False
         self.peer_id: Optional[str] = None
+
+        # TLS / Identity
+        self._identity = identity or Identity()
+        self._use_tls = use_tls
 
         # TCP слой
         self._tcp_server: Optional[asyncio.Server] = None
@@ -47,6 +61,9 @@ class P2PTransport:
         self._tcp_peer_addrs: dict[str, tuple[str, int]] = {}        # peer_id -> (host, port)
         self._reconnect_tasks: dict[str, asyncio.Task] = {}          # peer_id -> task
         self._bootstrap_peers: list[str] = bootstrap_peers or []
+
+        # TLS sessions (peer_pubkey_prefix -> SecureSession)
+        self._tls_sessions: dict[str, SecureSession] = {}
 
     async def start(self, host: str = "127.0.0.1", port: int = 0):
         """Запустить транспорт + TCP сервер на host:port (0 = случайный)."""
@@ -59,6 +76,10 @@ class P2PTransport:
         )
         self._tcp_port = self._tcp_server.sockets[0].getsockname()[1]
 
+        tls_mode = "TLS" if self._use_tls else "PLAIN"
+        print(f"[transport] Started. PeerID: {self.peer_id[:20]}... "
+              f"TCP: {host}:{self._tcp_port} [{tls_mode}]")
+
         # Подключение к bootstrap пирам
         for peer_spec in self._bootstrap_peers:
             parsed = self._parse_peer_spec(peer_spec)
@@ -66,8 +87,6 @@ class P2PTransport:
                 peer_id, remote_host, remote_port = parsed
                 self._start_reconnect_loop(peer_id, remote_host, remote_port)
 
-        print(f"[transport] Started. PeerID: {self.peer_id[:20]}... "
-              f"TCP: {host}:{self._tcp_port}")
         return self.peer_id
 
     async def publish(self, topic: str, data: bytes) -> None:
@@ -83,11 +102,11 @@ class P2PTransport:
                 except Exception as e:
                     print(f"[transport] callback error on {topic}: {e}")
 
-        # 2. TCP broadcast (base64 payload, без \n в data)
+        # 2. TCP broadcast
         await self._tcp_broadcast(topic, data.rstrip(b"\n"))
 
     async def subscribe(self, topic: str, callback: Callable) -> None:
-        """Подписаться на топик. Колбэк получает сырые bytes."""
+        """Подписаться на топик."""
         if topic in self._subscribed_topics:
             return
         self._subscribed_topics.add(topic)
@@ -110,8 +129,6 @@ class P2PTransport:
                     if sid != self.node_id
                 ]
         print(f"[transport] Unsubscribed from {topic}")
-
-        # Уведомить TCP пиров
         await self._tcp_notify_unsub(topic)
 
     async def peers(self, topic: Optional[str] = None) -> list[str]:
@@ -132,15 +149,13 @@ class P2PTransport:
         return sorted(local | tcp_peers)
 
     async def stop(self):
-        """Остановить транспорт: TCP + local bus."""
+        """Остановить транспорт."""
         self._running = False
 
-        # Остановить reconnect задачи
         for task in self._reconnect_tasks.values():
             task.cancel()
         self._reconnect_tasks.clear()
 
-        # Закрыть TCP соединения
         for peer_id, writer in list(self._tcp_connections.items()):
             try:
                 writer.close()
@@ -150,13 +165,12 @@ class P2PTransport:
         self._tcp_connections.clear()
         self._tcp_readers.clear()
         self._tcp_peer_addrs.clear()
+        self._tls_sessions.clear()
 
-        # Остановить TCP сервер
         if self._tcp_server:
             self._tcp_server.close()
             await self._tcp_server.wait_closed()
 
-        # Отписаться от топиков
         for topic in list(self._subscribed_topics):
             await self.unsubscribe(topic)
 
@@ -169,8 +183,20 @@ class P2PTransport:
         """Обработчик входящего TCP соединения."""
         peer_addr = writer.get_extra_info('peername')
         peer_id = f"tcp:{peer_addr[0]}:{peer_addr[1]}"
+        session: Optional[SecureSession] = None
 
-        # Сохраняем соединение временно (peer_id может уточниться)
+        # TLS handshake (если включён)
+        if self._use_tls:
+            session = await server_handshake(reader, writer, self._identity)
+            if session is None:
+                print(f"[transport] TLS handshake failed from {peer_addr}")
+                writer.close()
+                return
+            peer_id = f"tls:{session.peer_pubkey_hex[:16]}"
+            self._tls_sessions[session.peer_pubkey_hex[:16]] = session
+            print(f"[transport] TLS peer authenticated: {peer_id}")
+
+        # Сохраняем соединение
         self._tcp_connections[peer_id] = writer
         self._tcp_readers[peer_id] = reader
 
@@ -181,16 +207,21 @@ class P2PTransport:
                     break
 
                 try:
-                    msg = json.loads(line.decode().strip())
+                    raw = line.decode().strip()
+                    msg = json.loads(raw)
+
+                    # Если TLS — расшифровываем
+                    if session and is_encrypted_envelope(msg):
+                        msg = session.unpack_encrypted(msg)
+                        raw = json.dumps(msg, separators=(",", ":"))
+
                     msg_type = msg.get("type", "")
 
                     if msg_type == "pub":
                         topic = msg["topic"]
                         payload_b64 = msg.get("data", "")
-                        # Если есть from — используем как peer_id
                         remote_id = msg.get("from", peer_id)
                         if remote_id != peer_id:
-                            # Обновляем ключ соединения
                             self._tcp_connections[remote_id] = writer
                             self._tcp_readers[remote_id] = reader
                             if peer_id in self._tcp_connections:
@@ -200,31 +231,34 @@ class P2PTransport:
                             peer_id = remote_id
 
                         payload = base64.b64decode(payload_b64)
-                        # Доставить локально (без ретрансляции по TCP)
                         await self._deliver_local(topic, payload)
 
                     elif msg_type == "sub":
-                        remote_id = msg.get("from", peer_id)
-                        # Просто подтверждаем что peer жив
                         pass
 
                     elif msg_type == "ping":
-                        writer.write(b'{"type":"pong"}\n')
+                        pong = {"type": "pong"}
+                        if session:
+                            pong = session.pack_encrypted(pong)
+                        writer.write(
+                            json.dumps(pong, separators=(",", ":")).encode() + b"\n"
+                        )
                         await writer.drain()
 
                 except (json.JSONDecodeError, KeyError, ValueError):
-                    pass  # Игнорируем битые сообщения
+                    pass
 
         except (ConnectionResetError, BrokenPipeError, OSError):
             pass
         finally:
-            # Очистка при отключении
             for key in list(self._tcp_connections.keys()):
                 if self._tcp_connections.get(key) is writer:
                     del self._tcp_connections[key]
             for key in list(self._tcp_readers.keys()):
                 if self._tcp_readers.get(key) is reader:
                     del self._tcp_readers[key]
+            if session:
+                self._tls_sessions.pop(session.peer_pubkey_hex[:16], None)
             try:
                 writer.close()
             except Exception:
@@ -242,30 +276,53 @@ class P2PTransport:
             return None
 
     def _start_reconnect_loop(self, peer_id: str, host: str, port: int):
-        """Запустить фоновую задачу reconnect."""
         task = asyncio.create_task(
             self._reconnect_loop(peer_id, host, port)
         )
         self._reconnect_tasks[peer_id] = task
 
     async def _reconnect_loop(self, peer_id: str, host: str, port: int):
-        """Цикл переподключения с exponential backoff."""
+        """Цикл переподключения с exponential backoff + TLS handshake."""
         delay = 1.0
         max_delay = 30.0
+        session: Optional[SecureSession] = None
 
         while self._running:
             try:
                 reader, writer = await asyncio.open_connection(host, port)
-                self._tcp_connections[peer_id] = writer
-                self._tcp_readers[peer_id] = reader
-                self._tcp_peer_addrs[peer_id] = (host, port)
-                delay = 1.0  # Сброс после успешного подключения
+
+                # TLS handshake (если включён)
+                if self._use_tls:
+                    session = await client_handshake(
+                        reader, writer, self._identity
+                    )
+                    if session is None:
+                        print(f"[transport] TLS handshake failed to {host}:{port}")
+                        writer.close()
+                        await asyncio.sleep(delay)
+                        delay = min(delay * 2, max_delay)
+                        continue
+
+                    new_peer_id = f"tls:{session.peer_pubkey_hex[:16]}"
+                    self._tls_sessions[session.peer_pubkey_hex[:16]] = session
+                else:
+                    new_peer_id = peer_id
+                    session = None
+
+                self._tcp_connections[new_peer_id] = writer
+                self._tcp_readers[new_peer_id] = reader
+                self._tcp_peer_addrs[new_peer_id] = (host, port)
+                if new_peer_id != peer_id:
+                    self._tcp_connections.pop(peer_id, None)
+                    self._tcp_readers.pop(peer_id, None)
+                peer_id = new_peer_id
+                delay = 1.0
 
                 # Отправить текущие подписки
                 for topic in self._subscribed_topics:
                     await self._tcp_send(writer, {
                         "type": "sub", "topic": topic, "from": self.node_id
-                    })
+                    }, session)
 
                 # Читать сообщения от пира
                 while self._running:
@@ -273,17 +330,23 @@ class P2PTransport:
                     if not line:
                         break
                     try:
-                        msg = json.loads(line.decode().strip())
+                        raw = line.decode().strip()
+                        msg = json.loads(raw)
+
+                        if session and is_encrypted_envelope(msg):
+                            msg = session.unpack_encrypted(msg)
+
                         if msg.get("type") == "pub":
                             payload = base64.b64decode(msg["data"])
                             await self._deliver_local(msg["topic"], payload)
                         elif msg.get("type") == "ping":
-                            await self._tcp_send(writer, {"type": "pong"})
+                            pong = {"type": "pong"}
+                            await self._tcp_send(writer, pong, session)
                     except (json.JSONDecodeError, ValueError, KeyError):
                         pass
 
             except (OSError, ConnectionRefusedError, asyncio.TimeoutError):
-                pass  # retry with backoff
+                pass
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -292,14 +355,14 @@ class P2PTransport:
             if not self._running:
                 break
 
-            # Exponential backoff
             await asyncio.sleep(delay)
             delay = min(delay * 2, max_delay)
 
-        # Cleanup
         self._reconnect_tasks.pop(peer_id, None)
         self._tcp_connections.pop(peer_id, None)
         self._tcp_readers.pop(peer_id, None)
+        if session:
+            self._tls_sessions.pop(session.peer_pubkey_hex[:16], None)
 
     # ───────────────────────── TCP helpers ─────────────────────────
 
@@ -315,54 +378,53 @@ class P2PTransport:
         }
         encoded = json.dumps(msg, separators=(",", ":")) + "\n"
         data_bytes = encoded.encode()
-        for peer_id, writer in list(self._tcp_connections.items()):
+
+        for conn_peer_id, writer in list(self._tcp_connections.items()):
             try:
-                writer.write(data_bytes)
+                # Если есть TLS сессия для этого пира — шифруем
+                session = self._get_session_for_peer(conn_peer_id)
+                if session:
+                    out_msg = session.pack_encrypted(msg)
+                    out_bytes = json.dumps(out_msg, separators=(",", ":")) + "\n"
+                    writer.write(out_bytes.encode())
+                else:
+                    writer.write(data_bytes)
                 await writer.drain()
             except Exception:
-                pass  # reconnect task поднимет
+                pass
 
     async def _tcp_notify_sub(self, topic: str):
         """Уведомить TCP пиров о подписке."""
-        msg = {
-            "type": "sub",
-            "topic": topic,
-            "from": self.node_id,
-        }
-        encoded = json.dumps(msg, separators=(",", ":")) + "\n"
-        data_bytes = encoded.encode()
-        for writer in self._tcp_connections.values():
+        msg = {"type": "sub", "topic": topic, "from": self.node_id}
+        for conn_peer_id, writer in self._tcp_connections.items():
             try:
-                writer.write(data_bytes)
-                await writer.drain()
+                await self._tcp_send(writer, msg,
+                                     self._get_session_for_peer(conn_peer_id))
             except Exception:
                 pass
 
     async def _tcp_notify_unsub(self, topic: str):
         """Уведомить TCP пиров об отписке."""
-        msg = {
-            "type": "unsub",
-            "topic": topic,
-            "from": self.node_id,
-        }
-        encoded = json.dumps(msg, separators=(",", ":")) + "\n"
-        data_bytes = encoded.encode()
-        for writer in self._tcp_connections.values():
+        msg = {"type": "unsub", "topic": topic, "from": self.node_id}
+        for conn_peer_id, writer in self._tcp_connections.items():
             try:
-                writer.write(data_bytes)
-                await writer.drain()
+                await self._tcp_send(writer, msg,
+                                     self._get_session_for_peer(conn_peer_id))
             except Exception:
                 pass
 
     @staticmethod
-    async def _tcp_send(writer: asyncio.StreamWriter, msg: dict):
+    async def _tcp_send(writer: asyncio.StreamWriter, msg: dict,
+                        session: Optional[SecureSession] = None):
         """Отправить JSON сообщение в TCP сокет."""
+        if session:
+            msg = session.pack_encrypted(msg)
         encoded = json.dumps(msg, separators=(",", ":")) + "\n"
         writer.write(encoded.encode())
         await writer.drain()
 
     async def _deliver_local(self, topic: str, payload: bytes):
-        """Доставить сообщение в in-memory bus (без ретрансляции по TCP)."""
+        """Доставить сообщение в in-memory bus."""
         if not payload.endswith(b"\n"):
             payload = payload + b"\n"
         async with _bus_lock:
@@ -371,3 +433,13 @@ class P2PTransport:
                     callback(payload)
                 except Exception as e:
                     print(f"[transport] local delivery error on {topic}: {e}")
+
+    def _get_session_for_peer(self, conn_peer_id: str) -> Optional[SecureSession]:
+        """Найти TLS сессию для пира по peer_id."""
+        if not self._use_tls:
+            return None
+        # peer_id может быть tls:pubkey_prefix
+        for prefix, session in self._tls_sessions.items():
+            if prefix in conn_peer_id or conn_peer_id.startswith("tls:"):
+                return session
+        return None

@@ -1,5 +1,31 @@
 # Changelog
 
+## [v0.4.0-alpha] - 2026-05-10
+### Added
+- **Secure Mesh**: сквозное шифрование ChaCha20-Poly1305 поверх TCP (issue #4)
+- **Mutual auth**: Ed25519 challenge-response рукопожатие (3 сообщения)
+- **Perfect Forward Secrecy**: X25519 ECDH + HKDF для сессионных ключей
+- `phase0/handshake.py` — handshake протокол + SecureSession API
+- `phase0/SPEC_v0.4.md` — спецификация Secure Mesh
+- 8 новых тестов: SecureSession unit (3), handshake (2), TLS e2e (2), backward compat (1)
+
+### Changed
+- `P2PTransport.__init__()`: новые параметры `identity`, `use_tls`
+- `P2PTransport` расширен до ~444 строк (+71), zero new runtime deps
+- Test suite: 36 → 44 тестов
+- `MESH_TLS=1` env — включает шифрование
+
+### Security
+- Ed25519 mutual authentication (identity.py)
+- ChaCha20-Poly1305 AEAD per-message encryption
+- Replay protection: sequence-numbered nonces
+- Forward secrecy: ephemeral X25519 keys per session
+
+### Known Limits (v0.4)
+- 🌐 No NAT traversal: direct IP:port required
+- 📦 Base64 payload encoding: ~33% overhead
+- 🔁 Deduplication handled client-side (`msg_id` cache)
+
 ## [v0.3.1-alpha] - 2026-05-10
 ### Added
 - TCP transport layer: `asyncio.start_server` + outbound connections with exponential backoff (1→30s)

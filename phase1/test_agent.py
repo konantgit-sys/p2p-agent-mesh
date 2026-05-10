@@ -1,6 +1,6 @@
-"""Phase 1 — Agent SDK integration tests (real IPFS PubSub).
+"""Phase 1 — Agent SDK integration tests (P2P transport).
 
-Требует: запущенный IPFS daemon (--enable-pubsub-experiment).
+Не требует IPFS daemon. Использует глобальный relay.
 """
 
 import asyncio
@@ -34,13 +34,13 @@ async def test_agent_emit_listen_same_process():
 
     # Подписка на capability "forecast"
     sub = await listener.listen({"capability": "forecast"}, on_event)
-    await asyncio.sleep(1)
+    await asyncio.sleep(0.1)
 
     # Публикация
     msg_id = await forecaster.emit("forecast", {"coin": "BTC", "prediction": "UP", "conf": 0.85})
     assert msg_id, "msg_id must be returned"
 
-    await asyncio.sleep(3)
+    await asyncio.sleep(0.3)
 
     await sub.cancel()
     await forecaster.stop()
@@ -86,12 +86,12 @@ async def test_agent_capability_filter():
 
     # Подписка только на forecast
     sub = await agent_b.listen({"capability": "forecast"}, on_forecast)
-    await asyncio.sleep(1)
+    await asyncio.sleep(0.1)
 
     # Публикуем в оба топика
     await agent_a.emit("ping", {"data": "ping"})
     await agent_a.emit("forecast", {"data": "forecast"})
-    await asyncio.sleep(3)
+    await asyncio.sleep(0.3)
 
     await sub.cancel()
     await agent_a.stop()
@@ -130,12 +130,12 @@ async def test_agent_two_capabilities():
         received.append(msg.get("capability"))
 
     sub = await b.listen({"capability": ["ping", "pong"]}, on_any)
-    await asyncio.sleep(1)
+    await asyncio.sleep(0.1)
 
     await a.emit("ping", {"seq": 1})
     await a.emit("pong", {"seq": 2})
     await a.emit("ping", {"seq": 3})
-    await asyncio.sleep(3)
+    await asyncio.sleep(0.3)
 
     await sub.cancel()
     await a.stop()
@@ -173,10 +173,10 @@ async def test_agent_signature_verified():
         received.append(msg)
 
     sub = await b.listen({"capability": "test_sig"}, on_msg)
-    await asyncio.sleep(1)
+    await asyncio.sleep(0.1)
 
     await a.emit("test_sig", {"msg": "signed_message"})
-    await asyncio.sleep(3)
+    await asyncio.sleep(0.3)
 
     await sub.cancel()
     await a.stop()
@@ -212,7 +212,7 @@ async def test_agent_dht_query():
     await b.start()
 
     # Даём время на DHT replication
-    await asyncio.sleep(3)
+    await asyncio.sleep(0.5)
 
     # B ищет агента с capability "dht_service"
     results = await b.query("dht_service")
