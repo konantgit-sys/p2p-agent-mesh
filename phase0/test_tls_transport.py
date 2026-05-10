@@ -76,7 +76,8 @@ class TestHandshake:
                 session = await server_handshake(reader, writer, server_ident)
                 server_result.append(session)
                 server_ready.set()
-                # Не закрываем — тест ниже использует соединение
+                writer.close()
+                await writer.wait_closed()
 
             server = await asyncio.start_server(handler, "127.0.0.1", 0)
             port = server.sockets[0].getsockname()[1]
@@ -98,7 +99,7 @@ class TestHandshake:
                 assert srv is not None, "Server handshake failed"
                 assert srv.peer_pubkey_hex == client_ident.public_key_hex
 
-        await asyncio.wait_for(server_task(), 25.0)
+        await asyncio.wait_for(server_task(), 10.0)
 
     @pytest.mark.asyncio
     async def test_handshake_reject_wrong_pubkey(self):
@@ -114,6 +115,8 @@ class TestHandshake:
                 session = await server_handshake(reader, writer, server_ident)
                 server_session[0] = session
                 server_ready.set()
+                writer.close()
+                await writer.wait_closed()
 
             server = await asyncio.start_server(handler, "127.0.0.1", 0)
             port = server.sockets[0].getsockname()[1]
@@ -132,7 +135,7 @@ class TestHandshake:
                 # На сервере тоже None (клиент не прошёл верификацию)
                 # или сервер получил hello но auth не прошёл
 
-        await asyncio.wait_for(server_task(), 25.0)
+        await asyncio.wait_for(server_task(), 10.0)
 
 
 # ─────────────────────────────────────────────
