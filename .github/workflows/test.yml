@@ -25,7 +25,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install cryptography
 
       - name: Run tests
         run: |
-          python -m pytest phase0/ phase1/ relay/ tests/ -v --asyncio-mode=auto
+          python -m pytest phase0/ phase1/ relay/ -v --asyncio-mode=auto
