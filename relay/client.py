@@ -7,6 +7,7 @@ Agent → Relay (TLS) → Agent
 import asyncio
 import json
 import os
+import random
 import sys
 from typing import Callable, Optional
 
@@ -30,6 +31,16 @@ class RelayClient:
         stop() — отключиться
     """
 
+    SOFTMAX_BASE: float = 1.0
+    SOFTMAX_MAX: float = 30.0
+
+    @staticmethod
+    def _compute_backoff(attempt: int) -> float:
+        """Softmax-style backoff: avoids thundering herd without full randomness."""
+        exp_delay = RelayClient.SOFTMAX_BASE * (2 ** min(attempt, 5))  # cap at 2^5 = 32x
+        jitter = random.uniform(0.8, 1.2)  # ±20%
+        return min(RelayClient.SOFTMAX_MAX, exp_delay * jitter)
+
     def __init__(self, identity: Identity, relay_host: str, relay_port: int,
                  capabilities: Optional[list[str]] = None):
         self._identity = identity
@@ -44,9 +55,16 @@ class RelayClient:
         self._peers: list[dict] = []
         self._e2e_sessions: dict[str, SecureSession] = {}  # peer_pubkey → session
         self._e2e_pending: dict[str, asyncio.Future] = {}  # peer_pubkey → future
+        self._reconnect_attempt: int = 0
 
     async def connect(self) -> bool:
         """Подключиться к relay + handshake + register."""
+        # Сброс счётчика при успешном connect (вызвано вручную)
+        self._reconnect_attempt = 0
+        return await self._do_connect()
+
+    async def _do_connect(self) -> bool:
+        """Внутренняя логика подключения (с возможностью retry)."""
         try:
             self._reader, self._writer = await asyncio.open_connection(
                 self._relay_host, self._relay_port
@@ -236,11 +254,15 @@ class RelayClient:
         }))
 
     async def _read_loop(self):
-        """Фоновый цикл чтения сообщений от relay."""
+        """Фоновый цикл чтения сообщений от relay.
+        При разрыве — переподключается с softmax backoff.
+        """
         while self._running:
             try:
                 line = await self._reader.readline()
                 if not line:
+                    # Сброс счётчика при успешном цикле
+                    self._reconnect_attempt = 0
                     break
 
                 msg = json.loads(line.decode().strip())
@@ -294,6 +316,26 @@ class RelayClient:
                 break
             except Exception:
                 break
+
+        # Reconnect with softmax backoff при разрыве
+        if self._running:
+            self._reconnect_attempt += 1
+            delay = self._compute_backoff(self._reconnect_attempt)
+            print(f"[relay] Disconnected. Reconnect #{self._reconnect_attempt} in {delay:.1f}s")
+            await asyncio.sleep(delay)
+            asyncio.create_task(self._reconnect_loop())
+
+    async def _reconnect_loop(self):
+        """Цикл переподключения с нарастающим backoff."""
+        while self._running:
+            ok = await self._do_connect()
+            if ok:
+                self._reconnect_attempt = 0
+                return
+            self._reconnect_attempt += 1
+            delay = self._compute_backoff(self._reconnect_attempt)
+            print(f"[relay] Reconnect failed. Retry #{self._reconnect_attempt} in {delay:.1f}s")
+            await asyncio.sleep(delay)
 
     async def _send(self, msg: dict):
         """Отправить сообщение relay (зашифрованное relay session key)."""

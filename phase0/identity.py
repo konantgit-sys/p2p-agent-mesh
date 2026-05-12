@@ -5,6 +5,7 @@
 
 import json
 import time
+from typing import Optional
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
@@ -13,7 +14,7 @@ from cryptography.exceptions import InvalidSignature
 class Identity:
     """Ed25519 идентичность для mesh-узла."""
 
-    def __init__(self, private_key: ed25519.Ed25519PrivateKey = None):
+    def __init__(self, private_key: Optional[ed25519.Ed25519PrivateKey] = None):
         if private_key:
             self._private_key = private_key
         else:

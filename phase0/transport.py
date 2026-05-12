@@ -192,6 +192,7 @@ class P2PTransport:
                 print(f"[transport] TLS handshake failed from {peer_addr}")
                 writer.close()
                 return
+            assert session.peer_pubkey_hex is not None
             peer_id = f"tls:{session.peer_pubkey_hex[:16]}"
             self._tls_sessions[session.peer_pubkey_hex[:16]] = session
             print(f"[transport] TLS peer authenticated: {peer_id}")
@@ -258,6 +259,7 @@ class P2PTransport:
                 if self._tcp_readers.get(key) is reader:
                     del self._tcp_readers[key]
             if session:
+                assert session.peer_pubkey_hex is not None
                 self._tls_sessions.pop(session.peer_pubkey_hex[:16], None)
             try:
                 writer.close()
@@ -303,6 +305,7 @@ class P2PTransport:
                         delay = min(delay * 2, max_delay)
                         continue
 
+                    assert session.peer_pubkey_hex is not None
                     new_peer_id = f"tls:{session.peer_pubkey_hex[:16]}"
                     self._tls_sessions[session.peer_pubkey_hex[:16]] = session
                 else:
@@ -362,6 +365,7 @@ class P2PTransport:
         self._tcp_connections.pop(peer_id, None)
         self._tcp_readers.pop(peer_id, None)
         if session:
+            assert session.peer_pubkey_hex is not None
             self._tls_sessions.pop(session.peer_pubkey_hex[:16], None)
 
     # ───────────────────────── TCP helpers ─────────────────────────

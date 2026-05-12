@@ -71,7 +71,10 @@ class AgentMesh:
     def __init__(self, agent_id: str, capabilities: list[str],
                  identity: Optional[Identity] = None,
                  db_path: Optional[str] = None,
-                 rate_limit: int = 50):
+                 rate_limit: int = 50,
+                 port: int = 0,
+                 relay_host: Optional[str] = None,
+                 relay_port: int = 0):
         self.agent_id = agent_id
         self.capabilities = capabilities
         self.identity = identity or Identity()
@@ -81,6 +84,10 @@ class AgentMesh:
         )
         self.sig_gate = SigGate(rate_limit=rate_limit)
         self.dht = DHTStore(self.identity.did)
+        self._port = port
+        self._relay_host = relay_host
+        self._relay_port = relay_port
+        self._relay: Optional["RelayClient"] = None
         self._subscriptions: list[Subscription] = []
         self._subscribed_topics: set[str] = set()
         self._running = False
@@ -90,7 +97,21 @@ class AgentMesh:
     async def start(self) -> str:
         """Подключиться к IPFS, подписаться на DHT, зарегистрироваться."""
         self._running = True
-        peer_id = await self.transport.start()
+        peer_id = await self.transport.start(port=self._port)
+
+        # Если указан relay — подключаемся
+        if self._relay_host and self._relay_port:
+            from relay.client import RelayClient
+            self._relay = RelayClient(
+                identity=self.identity,
+                relay_host=self._relay_host,
+                relay_port=self._relay_port,
+                capabilities=self.capabilities,
+            )
+            relay_ok = await self._relay.connect()
+            print(f"[agent] Relay {'connected' if relay_ok else 'FAILED'}")
+        else:
+            self._relay = None
 
         # Подписка на DHT топик (для discovery)
         await self.transport.subscribe(
