@@ -7,8 +7,9 @@
 """
 
 import asyncio
-import json
+
 import pytest
+
 from phase0.transport import P2PTransport
 
 
@@ -29,10 +30,7 @@ async def test_tcp_emit_listen():
     await t_b.subscribe("test:tcp", on_msg)
 
     # Транспорт A (клиент, bootstrap к B)
-    t_a = P2PTransport(
-        node_id="node_a",
-        bootstrap_peers=[f"node_b@127.0.0.1:{t_b._tcp_port}"]
-    )
+    t_a = P2PTransport(node_id="node_a", bootstrap_peers=[f"node_b@127.0.0.1:{t_b._tcp_port}"])
     await t_a.start(host="127.0.0.1", port=0)
 
     # Ждём установки TCP соединения
@@ -73,10 +71,7 @@ async def test_tcp_bidirectional():
     await t_b.subscribe("test:bidir", on_msg_b)
 
     # Транспорт A (bootstrap к B)
-    t_a = P2PTransport(
-        node_id="node_a",
-        bootstrap_peers=[f"node_b@127.0.0.1:{t_b._tcp_port}"]
-    )
+    t_a = P2PTransport(node_id="node_a", bootstrap_peers=[f"node_b@127.0.0.1:{t_b._tcp_port}"])
     await t_a.start(host="127.0.0.1", port=0)
     await t_a.subscribe("test:bidir", on_msg_a)
 
@@ -109,10 +104,7 @@ async def test_tcp_peers():
     t_b = P2PTransport(node_id="node_b")
     await t_b.start(host="127.0.0.1", port=0)
 
-    t_a = P2PTransport(
-        node_id="node_a",
-        bootstrap_peers=[f"node_b@127.0.0.1:{t_b._tcp_port}"]
-    )
+    t_a = P2PTransport(node_id="node_a", bootstrap_peers=[f"node_b@127.0.0.1:{t_b._tcp_port}"])
     await t_a.start(host="127.0.0.1", port=0)
     await asyncio.sleep(0.5)
 
@@ -144,6 +136,7 @@ async def test_tcp_reconnect():
     Проверка reconnection: B падает → A переподключается когда B встаёт.
     """
     received = []
+
     def on_msg(data: bytes):
         received.append(data)
 
@@ -153,10 +146,7 @@ async def test_tcp_reconnect():
     b_port = t_b._tcp_port
 
     # A подключается к B
-    t_a = P2PTransport(
-        node_id="node_a",
-        bootstrap_peers=[f"node_b@127.0.0.1:{b_port}"]
-    )
+    t_a = P2PTransport(node_id="node_a", bootstrap_peers=[f"node_b@127.0.0.1:{b_port}"])
     await t_a.start(host="127.0.0.1", port=0)
     await asyncio.sleep(0.5)
 
@@ -175,10 +165,7 @@ async def test_tcp_reconnect():
     # (bootstrap адрес статический). Создаём новый A с новым bootstrap
     await t_a.stop()
 
-    t_a2 = P2PTransport(
-        node_id="node_a",
-        bootstrap_peers=[f"node_b@127.0.0.1:{b2_port}"]
-    )
+    t_a2 = P2PTransport(node_id="node_a", bootstrap_peers=[f"node_b@127.0.0.1:{b2_port}"])
     await t_a2.start(host="127.0.0.1", port=0)
     await t_b2.subscribe("test:reconnect", on_msg)
     await asyncio.sleep(0.5)

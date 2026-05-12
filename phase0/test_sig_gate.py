@@ -1,18 +1,19 @@
 """Phase 0 — Sig Gate test: верификация + rate limiting + allowlist."""
 
 import json
-import time
-import pytest
+
 from phase0.identity import Identity
 from phase0.sig_gate import SigGate
 
 
 def make_signed_msg(ident: Identity, topic: str = "test", payload: dict = None):
     """Создать подписанное сообщение и сериализовать в bytes."""
-    msg = ident.sign_message({
-        "topic": topic,
-        "payload": payload or {"data": "test"},
-    })
+    msg = ident.sign_message(
+        {
+            "topic": topic,
+            "payload": payload or {"data": "test"},
+        }
+    )
     return json.dumps(msg).encode()
 
 

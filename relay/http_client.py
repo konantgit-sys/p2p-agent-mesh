@@ -1,4 +1,9 @@
+# SPDX-License-Identifier: MIT
+# Copyright 2026 SNIN Network <snin@v2.site>
+
 """HTTP relay client — для подключения через relay-mesh.v2.site.
+
+
 
 Использование:
     from relay.http_client import HTTPRelayClient
@@ -11,17 +16,16 @@
 
 import json
 import time
-import urllib.request
 import urllib.error
-from typing import Optional
+import urllib.request
 
 
 class HTTPRelayClient:
     """Relay клиент поверх HTTP API (long-polling)."""
 
-    def __init__(self, identity, relay_url: str = "https://relay-mesh.v2.site"):
+    def __init__(self, identity, relay_url: str = ""):
         self._identity = identity
-        self._relay_url = relay_url.rstrip("/")
+        self._relay_url = relay_url.rstrip("/") if relay_url else ""
         self._pubkey = identity.public_key_hex
         self._agent_id = identity.public_key_hex[:16]
         self._relay_info = None
@@ -34,15 +38,17 @@ class HTTPRelayClient:
     def agent_id(self) -> str:
         return self._agent_id
 
-    def _request(self, method: str, path: str, data: Optional[dict] = None,
-                 timeout: int = 10) -> Optional[dict]:
+    def _request(
+        self, method: str, path: str, data: dict | None = None, timeout: int = 10
+    ) -> dict | None:
         url = f"{self._relay_url}{path}"
         if method == "GET":
             req = urllib.request.Request(url)
         else:
             body = json.dumps(data).encode() if data else b""
-            req = urllib.request.Request(url, data=body,
-                                         headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(
+                url, data=body, headers={"Content-Type": "application/json"}
+            )
             req.method = method
 
         try:
@@ -54,10 +60,14 @@ class HTTPRelayClient:
 
     async def register(self) -> bool:
         """Зарегистрироваться на relay."""
-        resp = self._request("POST", "/api/register", {
-            "pubkey": self._pubkey,
-            "capabilities": [],
-        })
+        resp = self._request(
+            "POST",
+            "/api/register",
+            {
+                "pubkey": self._pubkey,
+                "capabilities": [],
+            },
+        )
         if resp and resp.get("type") == "registered":
             self._relay_info = resp
             return True
@@ -70,8 +80,9 @@ class HTTPRelayClient:
             return resp.get("peers", [])
         return []
 
-    async def send(self, target_pubkey: str, data: bytes, msg_type: str = "send",
-                   eph_pub: str = "") -> bool:
+    async def send(
+        self, target_pubkey: str, data: bytes, msg_type: str = "send", eph_pub: str = ""
+    ) -> bool:
         """Отправить E2E зашифрованное сообщение через relay."""
         payload = {
             "from": self._pubkey,
@@ -91,7 +102,7 @@ class HTTPRelayClient:
             return resp.get("messages", [])
         return []
 
-    async def e2e_establish(self, target_pubkey: str) -> Optional[bytes]:
+    async def e2e_establish(self, target_pubkey: str) -> bytes | None:
         """Полный цикл E2E установки через relay.
         Возвращает общий сессионный ключ или None при ошибке.
         """
@@ -102,8 +113,7 @@ class HTTPRelayClient:
         eph_pub_hex = eph.public_key_hex
 
         # Отправляем e2e_init
-        ok = await self.send(target_pubkey, b"", msg_type="e2e_init",
-                             eph_pub=eph_pub_hex)
+        ok = await self.send(target_pubkey, b"", msg_type="e2e_init", eph_pub=eph_pub_hex)
         if not ok:
             return None
 

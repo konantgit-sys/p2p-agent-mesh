@@ -1,4 +1,9 @@
+# Copyright 2026 SNIN Network <snin@v2.site>
+# SPDX-License-Identifier: MIT
+
 """Phase 0 — Handshake: Ed25519 mutual auth + X25519 ECDH + ChaCha20-Poly1305.
+
+
 
 Схема:
 1. Client → Server: hello (pubkey, nonce, eph_pub)
@@ -12,24 +17,25 @@
 import asyncio
 import json
 import os
-from typing import Optional, Tuple
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey, Ed25519PublicKey,
+    Ed25519PublicKey,
 )
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
-    X25519PrivateKey, X25519PublicKey,
+    X25519PrivateKey,
+    X25519PublicKey,
 )
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
-from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from phase0.identity import Identity
-
 
 # ─────────────────────────────────────────────
 # Session: хранит ключ + nonce sequence
 # ─────────────────────────────────────────────
+
 
 class SecureSession:
     """Сессионный ключ + ChaCha20-Poly1305 для шифрования сообщений."""
@@ -39,7 +45,7 @@ class SecureSession:
         self._cipher = ChaCha20Poly1305(session_key)
         self._send_seq = 0
         self._recv_seq = 0
-        self.peer_pubkey_hex: Optional[str] = None
+        self.peer_pubkey_hex: str | None = None
 
     def encrypt(self, plaintext: bytes) -> bytes:
         """Зашифровать. Возвращает nonce(12) + ciphertext+tag."""
@@ -77,17 +83,16 @@ class SecureSession:
 # Handshake
 # ─────────────────────────────────────────────
 
+
 def _generate_nonce() -> bytes:
     return os.urandom(32)
 
 
 def _x25519_pub_to_hex(pub: X25519PublicKey) -> str:
-    return pub.public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw
-    ).hex()
+    return pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
 
 
-def _x25519_priv_generate() -> Tuple[X25519PrivateKey, str]:
+def _x25519_priv_generate() -> tuple[X25519PrivateKey, str]:
     priv = X25519PrivateKey.generate()
     return priv, _x25519_pub_to_hex(priv.public_key())
 
@@ -114,7 +119,7 @@ async def server_handshake(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
     identity: Identity,
-) -> Optional[SecureSession]:
+) -> SecureSession | None:
     """Server-side handshake."""
     # 1. Ждём hello
     line = await reader.readline()
@@ -177,17 +182,17 @@ async def server_handshake(
 
     # Верифицируем подпись клиента
     try:
-        client_pub = Ed25519PublicKey.from_public_bytes(
-            bytes.fromhex(client_pubkey_hex)
-        )
+        client_pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(client_pubkey_hex))
         client_pub.verify(client_sig, server_nonce)
     except (InvalidSignature, ValueError):
         return None
 
     # 4. Вычисляем сессионный ключ
     session_key = _derive_session_key(
-        server_eph_priv, client_eph_pub_hex,
-        client_nonce, server_nonce,
+        server_eph_priv,
+        client_eph_pub_hex,
+        client_nonce,
+        server_nonce,
     )
     session = SecureSession(session_key)
     session.peer_pubkey_hex = client_pubkey_hex
@@ -198,8 +203,8 @@ async def client_handshake(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
     identity: Identity,
-    expected_server_pubkey: Optional[str] = None,
-) -> Optional[SecureSession]:
+    expected_server_pubkey: str | None = None,
+) -> SecureSession | None:
     """Client-side handshake."""
     # 1. Отправляем hello
     client_eph_priv, client_eph_pub_hex = _x25519_priv_generate()
@@ -231,8 +236,12 @@ async def client_handshake(
     server_nonce_sig = bytes.fromhex(challenge.get("nonce_sig", ""))
     server_eph_pub_hex = challenge.get("eph_pub", "")
 
-    if (len(server_nonce) != 32 or not server_pubkey_hex
-            or not server_nonce_sig or not server_eph_pub_hex):
+    if (
+        len(server_nonce) != 32
+        or not server_pubkey_hex
+        or not server_nonce_sig
+        or not server_eph_pub_hex
+    ):
         return None
 
     # Проверяем pubkey сервера
@@ -241,9 +250,7 @@ async def client_handshake(
 
     # Верифицируем подпись сервера
     try:
-        server_pub = Ed25519PublicKey.from_public_bytes(
-            bytes.fromhex(server_pubkey_hex)
-        )
+        server_pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(server_pubkey_hex))
         server_pub.verify(server_nonce_sig, client_nonce)
     except (InvalidSignature, ValueError):
         return None
@@ -256,8 +263,10 @@ async def client_handshake(
 
     # 4. Вычисляем сессионный ключ
     session_key = _derive_session_key(
-        client_eph_priv, server_eph_pub_hex,
-        client_nonce, server_nonce,
+        client_eph_priv,
+        server_eph_pub_hex,
+        client_nonce,
+        server_nonce,
     )
     session = SecureSession(session_key)
     session.peer_pubkey_hex = server_pubkey_hex
@@ -267,6 +276,7 @@ async def client_handshake(
 # ─────────────────────────────────────────────
 # Message detection helpers
 # ─────────────────────────────────────────────
+
 
 def is_encrypted_envelope(msg: dict) -> bool:
     """Проверить, является ли сообщение encrypted envelope."""

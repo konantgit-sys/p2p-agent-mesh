@@ -1,82 +1,51 @@
-version: "3.8"
-
-# После `docker-compose up -d`, проверь связность:
-#   docker compose exec ipfs-bootstrap ipfs swarm peers
-# Должно быть 2+ peer ID. Если пусто — подожди 10 сек и повтори.
-# Если relay не стартует — проверь версию Docker Compose (нужна v2+).
+# P2P Agent Mesh — Docker Compose
+# Phase 1: relay + agent template
+# Использование:
+#   docker-compose up -d                    # relay + 1 agent (echo)
+#   docker-compose --env-file snin.env up   # SNIN DAO pilot
+#   docker-compose run agent --help         # CLI справка
 
 services:
-  # === Bootstrap relay — IPFS daemon ===
-  ipfs-bootstrap:
-    image: ipfs/kubo:v0.29.0
-    container_name: mesh-bootstrap
+  # === Relay (public seed node) ===
+  relay:
+    build: .
+    command: python -m relay.server --port 8443 --host 0.0.0.0
     ports:
-      - "4001:4001"
-      - "5001:5001"
+      - "${RELAY_PORT:-8443}:8443"
     environment:
-      - IPFS_PROFILE=server
+      - RELAY_MAX_MSGS_PER_SEC=${RELAY_MAX_MSGS_PER_SEC:-10}
+      - RELAY_MAX_CONN_PER_IP=${RELAY_MAX_CONN_PER_IP:-5}
+      - RELAY_MAX_PAYLOAD=${RELAY_MAX_PAYLOAD:-1048576}
     volumes:
-      - ipfs-data:/data/ipfs
-    command: >
-      sh -c "
-        ipfs init --profile server 2>/dev/null;
-        ipfs config --json Experimental.Libp2pStreamMounting true;
-        ipfs config --json Swarm.EnableRelayHop true;
-        ipfs config --json Addresses.Gateway '\"\"';
-        ipfs daemon --enable-pubsub-experiment
-      "
+      - relay-data:/app/data
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "ipfs", "id", "-f", "<id>"]
-      interval: 5s
-      retries: 10
-      start_period: 10s
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost',8443)); s.close(); print('ok')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
-  # === Agent 1 — Listener ===
-  agent-listener:
+  # === Agent (шаблон — копировать для каждого агента) ===
+  agent:
     build: .
-    container_name: mesh-listener
+    command: >
+      python cli.py
+      --agent ${AGENT_NAME:-echo_agent}
+      --capability ${AGENT_CAP:-echo}
+      --port ${AGENT_PORT:-0}
+      --relay-host ${RELAY_HOST:-relay}
+      --relay-port ${RELAY_PORT:-8443}
+      ${AGENT_LISTEN:+--listen}
+    environment:
+      - MESH_TLS=${MESH_TLS:-1}
     depends_on:
-      ipfs-bootstrap:
+      relay:
         condition: service_healthy
-    environment:
-      - AGENT_ID=listener
-      - AGENT_CAP=ping
-      - MODE=listener
-      - RELAY_HOST=ipfs-bootstrap
-    networks:
-      - mesh-net
-
-  # === Agent 2 — Publisher ===
-  agent-publisher:
-    build: .
-    container_name: mesh-publisher
-    depends_on:
-      - agent-listener
-    environment:
-      - AGENT_ID=publisher
-      - AGENT_CAP=ping
-      - MODE=publisher
-      - RELAY_HOST=ipfs-bootstrap
-    networks:
-      - mesh-net
-
-  # === Agent 3 — LangGraph Demo ===
-  agent-langgraph:
-    build: .
-    container_name: mesh-langgraph
-    depends_on:
-      - agent-listener
-    environment:
-      - AGENT_ID=lg-demo
-      - AGENT_CAP=crypto_analysis
-      - MODE=listener
-      - RELAY_HOST=ipfs-bootstrap
-    networks:
-      - mesh-net
-
-networks:
-  mesh-net:
-    driver: bridge
+    restart: unless-stopped
+    profiles:
+      - ""        # активен по умолчанию
+      - agent
 
 volumes:
-  ipfs-data:
+  relay-data:

@@ -1,12 +1,18 @@
+# SPDX-License-Identifier: MIT
+# Copyright 2026 SNIN Network <snin@v2.site>
+
 """Relay over HTTP API — для деплоя на *.v2.site.
 
 POST /api/message — отправить сообщение
 GET /api/messages    — получить сообщения
 """
 
-import os, json, time, sys
+import os
+import sys
+import time
 from collections import defaultdict, deque
-from flask import Flask, request, jsonify
+
+from flask import Flask, jsonify, request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from phase0.identity import Identity
@@ -14,7 +20,7 @@ from phase0.identity import Identity
 app = Flask(__name__)
 
 # ─── In-memory store ─────────────────────────────────────────────
-agents: dict[str, dict] = {}       # pubkey → {capabilities, registered_at}
+agents: dict[str, dict] = {}  # pubkey → {capabilities, registered_at}
 pending: dict[str, list[dict]] = defaultdict(list)  # target_pubkey → [msg]
 rate_limits: dict[str, deque] = defaultdict(deque)
 MAX_MSGS_PER_SEC = int(os.getenv("RELAY_MAX_MSGS_PER_SEC", "10"))
@@ -48,13 +54,18 @@ def register():
     caps = data.get("capabilities", [])
     if not verify_auth(pubkey):
         return jsonify({"error": "invalid_pubkey"}), 400
-    agents[pubkey] = {"capabilities": caps, "registered_at": time.time(),
-                      "agent_id": pubkey[:16]}
-    return jsonify({
-        "type": "registered",
+    agents[pubkey] = {
+        "capabilities": caps,
+        "registered_at": time.time(),
         "agent_id": pubkey[:16],
-        "relay": relay_identity.public_key_hex[:16],
-    })
+    }
+    return jsonify(
+        {
+            "type": "registered",
+            "agent_id": pubkey[:16],
+            "relay": relay_identity.public_key_hex[:16],
+        }
+    )
 
 
 @app.route("/api/peers", methods=["GET"])
@@ -63,8 +74,7 @@ def peers():
     if not verify_auth(pubkey):
         return jsonify({"error": "invalid_pubkey"}), 400
     peer_list = [
-        {"pubkey": k, "capabilities": v["capabilities"]}
-        for k, v in agents.items() if k != pubkey
+        {"pubkey": k, "capabilities": v["capabilities"]} for k, v in agents.items() if k != pubkey
     ]
     return jsonify({"type": "peers", "peers": peer_list})
 
@@ -124,12 +134,14 @@ def get_messages():
 
 @app.route("/api/stats", methods=["GET"])
 def stats():
-    return jsonify({
-        "agents": len(agents),
-        "pending": sum(len(v) for v in pending.values()),
-        "relay_pubkey": relay_identity.public_key_hex[:16],
-        "uptime": time.time() - start_time,
-    })
+    return jsonify(
+        {
+            "agents": len(agents),
+            "pending": sum(len(v) for v in pending.values()),
+            "relay_pubkey": relay_identity.public_key_hex[:16],
+            "uptime": time.time() - start_time,
+        }
+    )
 
 
 @app.route("/health", methods=["GET"])

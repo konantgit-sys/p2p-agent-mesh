@@ -1,4 +1,9 @@
+# Copyright 2026 SNIN Network <snin@v2.site>
+# SPDX-License-Identifier: MIT
+
 """Phase 0 — DHT: key-value хранилище поверх IPFS PubSub.
+
+
 
 Не классическая Kademlia, а distributed hash table через pub/sub:
 - Все узлы подписаны на топик `_dht`
@@ -8,10 +13,8 @@
 - TTL: по умолчанию 86400 сек (24ч)
 """
 
-import json
 import time
 from collections import OrderedDict
-from typing import Optional
 
 
 class DHTStore:
@@ -23,7 +26,7 @@ class DHTStore:
         self._max_keys = max_keys
         self._topic = "_dht"
 
-    def handle_message(self, msg: dict) -> Optional[str]:
+    def handle_message(self, msg: dict) -> str | None:
         """Обработать входящее DHT-сообщение."""
         payload = msg.get("payload", {})
         op = payload.get("op")
@@ -47,7 +50,7 @@ class DHTStore:
             "value": value,
             "expires": expires,
             "source": source,
-            "stored_at": time.time()
+            "stored_at": time.time(),
         }
         self._cache[key] = entry
         self._cache.move_to_end(key)
@@ -60,15 +63,10 @@ class DHTStore:
         """Подготовить PUT сообщение для публикации в mesh."""
         return {
             "topic": self._topic,
-            "payload": {
-                "op": "put",
-                "key": key,
-                "value": value,
-                "ttl": ttl
-            }
+            "payload": {"op": "put", "key": key, "value": value, "ttl": ttl},
         }
 
-    def get(self, key: str) -> Optional[dict]:
+    def get(self, key: str) -> dict | None:
         """Получить значение из локального кэша."""
         entry = self._cache.get(key)
         if entry is None:

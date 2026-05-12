@@ -1,5 +1,35 @@
 # Changelog
 
+## [v0.5.0] - 2026-05-12
+### Added
+- **Coordination Layer** (`coordination/`): Micro-Raft consensus (leader election, log replication), Consumer Groups (ordered delivery, offset persistence), Exactly-once Dedup (DedupLog with TTL) — 37 тестов
+- **DePIN SDK** (`depin/`): Merkle Tree + Sync (99% экономия трафика), Device Registry (CRUD + attestation), WAL (offline-first, TTL), Device Pipeline (simulated_device.py) — 16 тестов
+- **SNIN DAO Pilot** (`pilot/`): 3-агентная цепочка Cryter (signal) → Forecaster (forecast) → Creator (content) — 4 теста
+- **Адаптеры**: LangGraph Channel, CrewAI Tool, AutoGen Adapter — 58 тестов
+- **WebSocket relay** (`relay/ws_relay.py`): WSS relay для браузеров
+- **HTTP relay** (`relay/http_relay.py`): Flask-based REST relay (register/peers/send/messages/stats)
+- **CLI**: флаги `--port`, `--host`, `--relay`, `--listen`
+- **Публичный relay**: `mesh-relay.v2.site` (HTTP API + agent registration)
+- **Документация**: SECURITY_MODEL.md (crypto stack + threat model L0-L3), PILOT_GUIDE.md (запуск за 15 мин), OUTREACH_KIT.md, RELAY_STATUS.md, RELEASE_NOTES.md
+
+### Security
+- Аудит nonce: sequence-based + новый ECDH ключ на сессию ✅
+- pip-audit: 0 уязвимостей
+- Rate limiting: SigGate (10 msg/s), RELAY_MAX_MSGS_PER_SEC, RELAY_MAX_CONN_PER_IP
+- Copyright headers во всех ключевых файлах (24 файла)
+
+### Changed
+- Полный рефакторинг чеклиста pre-push: 7 блоков, 28 проверок
+- Dockerfile: multi-stage, все модули (coordination, depin, pilot)
+- requirements.txt: синхронизирован с pyproject.toml
+- Test suite: 96 → 133 теста, 93s full run
+
+### Infrastructure
+- GitHub release-ready: README, QUICKSTART, CHANGELOG, SECURITY, CONTRIBUTING, LICENSE — всё обновлено
+- `.gitignore` + `.dockerignore` + `.env.example`
+- MIT license, SPDX headers
+- Docker Compose: relay + agent template с healthcheck
+
 ## [v0.4.1-alpha] - 2026-05-10
 ### Added
 - **NAT Traversal via Relay**: публичный relay-узел для агентов за NAT

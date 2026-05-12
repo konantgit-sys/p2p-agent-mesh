@@ -1,6 +1,5 @@
 """CrewAI adapter — MeshTool для P2P коммуникации агентов."""
 
-from typing import Any
 from sdk.agent import AgentMesh
 
 
@@ -16,11 +15,10 @@ class MeshTool:
     def run(self, **kwargs) -> dict:
         """Execute mesh request."""
         import asyncio
+
         try:
             loop = asyncio.get_event_loop()
-            result = loop.run_until_complete(
-                self.mesh.request(self.capability, kwargs)
-            )
+            result = loop.run_until_complete(self.mesh.request(self.capability, kwargs))
         except RuntimeError:
             result = {"error": "no event loop"}
         return result or {}

@@ -4,11 +4,13 @@
 """
 
 import asyncio
-import tempfile
 import os
+import tempfile
+
 import pytest
+
+from adapters.langgraph_channel import MeshRPC, MeshStateSync, MeshTopic
 from sdk.agent import AgentMesh
-from adapters.langgraph_channel import MeshTopic, MeshStateSync, MeshRPC
 
 
 @pytest.mark.asyncio
@@ -117,8 +119,7 @@ async def test_mesh_rpc():
     db2 = tempfile.mktemp(suffix=".db")
 
     agent_a = AgentMesh("rpc_client", ["listen"], db_path=db1)
-    agent_b = AgentMesh("rpc_server", ["calc_risk"], db_path=db2,
-                        rate_limit=200)
+    agent_b = AgentMesh("rpc_server", ["calc_risk"], db_path=db2, rate_limit=200)
 
     await agent_a.start()
     await agent_b.start()
@@ -137,11 +138,7 @@ async def test_mesh_rpc():
     await asyncio.sleep(1)
 
     # Client: send request
-    result = await rpc_client.request(
-        "calc_risk",
-        {"position": "BTC", "size": 1.0},
-        timeout=10.0
-    )
+    result = await rpc_client.request("calc_risk", {"position": "BTC", "size": 1.0}, timeout=10.0)
 
     print(f"  RPC result: {result}")
 

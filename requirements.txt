@@ -1,14 +1,21 @@
+# P2P Agent Mesh — зависимости
+# pip install -r requirements.txt
+
 # Core
-# libp2p>=0.9.0  # when available
-aiofiles>=24.0.0
+cryptography>=42.0
 
-# SDK
-pydantic>=2.0
+# Relay
+websockets>=12.0
+flask>=3.0
+requests>=2.31
 
-# Adapters
-# langgraph>=0.2.0  # pin version, API may drift
-# crewai>=0.30.0
+# Adapters (опционально)
+# langgraph>=0.0.27
+# crewai>=0.1.0
+# pyautogen>=0.2.0
 
 # Dev
 pytest>=8.0
 pytest-asyncio>=0.24
+ruff>=0.4
+mypy>=1.8

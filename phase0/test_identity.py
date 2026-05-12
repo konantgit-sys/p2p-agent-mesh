@@ -1,8 +1,5 @@
 """Phase 0 — Identity test: Ed25519 подпись + верификация."""
 
-import json
-import time
-import pytest
 from phase0.identity import Identity
 
 
@@ -16,10 +13,12 @@ def test_generate_key():
 def test_sign_and_verify():
     """Подписать и верифицировать сообщение."""
     ident = Identity()
-    msg = ident.sign_message({
-        "topic": "test",
-        "payload": {"hello": "world"},
-    })
+    msg = ident.sign_message(
+        {
+            "topic": "test",
+            "payload": {"hello": "world"},
+        }
+    )
     assert "signature" in msg
     assert "pubkey" in msg
     assert "from" in msg
@@ -29,10 +28,12 @@ def test_sign_and_verify():
 def test_verify_tampered():
     """Подмена payload → верификация FAIL."""
     ident = Identity()
-    msg = ident.sign_message({
-        "topic": "test",
-        "payload": {"original": "data"},
-    })
+    msg = ident.sign_message(
+        {
+            "topic": "test",
+            "payload": {"original": "data"},
+        }
+    )
     msg["payload"] = {"tampered": "yes"}
     assert not Identity.verify(msg)
 
@@ -48,10 +49,12 @@ def test_verify_wrong_pubkey():
     alice = Identity()
     bob = Identity()
 
-    msg = alice.sign_message({
-        "topic": "test",
-        "payload": {"secret": "data"},
-    })
+    msg = alice.sign_message(
+        {
+            "topic": "test",
+            "payload": {"secret": "data"},
+        }
+    )
     # Подменяем pubkey на Bob
     msg["pubkey"] = bob.public_key_hex
     assert not Identity.verify(msg)
@@ -79,8 +82,10 @@ def test_multiple_messages():
     """Серия подписанных сообщений — все верифицируются."""
     ident = Identity()
     for i in range(10):
-        msg = ident.sign_message({
-            "topic": f"test_{i}",
-            "payload": {"seq": i},
-        })
+        msg = ident.sign_message(
+            {
+                "topic": f"test_{i}",
+                "payload": {"seq": i},
+            }
+        )
         assert Identity.verify(msg), f"Message {i} failed verification"

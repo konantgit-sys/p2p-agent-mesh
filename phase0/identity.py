@@ -1,20 +1,25 @@
+# Copyright 2026 SNIN Network <snin@v2.site>
+# SPDX-License-Identifier: MIT
+
 """Phase 0 — Identity: Ed25519 ключи + подпись + DID.
+
+
 
 Использует cryptography.hazmat.primitives.asymmetric.ed25519.
 """
 
 import json
 import time
-from typing import Optional
-from cryptography.hazmat.primitives.asymmetric import ed25519
-from cryptography.hazmat.primitives import serialization
+
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 
 class Identity:
     """Ed25519 идентичность для mesh-узла."""
 
-    def __init__(self, private_key: Optional[ed25519.Ed25519PrivateKey] = None):
+    def __init__(self, private_key: ed25519.Ed25519PrivateKey | None = None):
         if private_key:
             self._private_key = private_key
         else:
@@ -24,8 +29,7 @@ class Identity:
 
     def _make_did(self) -> str:
         pub_hex = self._public_key.public_bytes(
-            serialization.Encoding.Raw,
-            serialization.PublicFormat.Raw
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
         ).hex()
         return f"did:snin:{pub_hex[:16]}"
 
@@ -54,7 +58,8 @@ class Identity:
         # Подписываем каноничный JSON
         to_sign = json.dumps(
             {k: msg[k] for k in ["topic", "payload", "from", "ts"]},
-            sort_keys=True, separators=(",", ":")
+            sort_keys=True,
+            separators=(",", ":"),
         ).encode()
         msg["signature"] = self.sign(to_sign)
         return msg
@@ -67,9 +72,9 @@ class Identity:
             sig_raw = bytes.fromhex(msg.get("signature", ""))
             public_key = ed25519.Ed25519PublicKey.from_public_bytes(pub_raw)
             to_verify = json.dumps(
-                {k: msg[k] for k in ["topic", "payload", "from", "ts"]
-                 if k in msg},
-                sort_keys=True, separators=(",", ":")
+                {k: msg[k] for k in ["topic", "payload", "from", "ts"] if k in msg},
+                sort_keys=True,
+                separators=(",", ":"),
             ).encode()
             public_key.verify(sig_raw, to_verify)
             return True
@@ -79,8 +84,7 @@ class Identity:
     @property
     def public_key_hex(self) -> str:
         return self._public_key.public_bytes(
-            serialization.Encoding.Raw,
-            serialization.PublicFormat.Raw
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
         ).hex()
 
     @property
@@ -88,7 +92,7 @@ class Identity:
         return self._private_key.private_bytes(
             serialization.Encoding.Raw,
             serialization.PrivateFormat.Raw,
-            serialization.NoEncryption()
+            serialization.NoEncryption(),
         ).hex()
 
     def to_dict(self) -> dict:

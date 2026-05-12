@@ -1,25 +1,45 @@
-# P2P Agent Mesh Dockerfile
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1.4
+# P2P Agent Mesh — Docker
+# Multi-stage build, <80MB final image
 
-# Install IPFS kubo
-RUN apt-get update && apt-get install -y wget curl && \
-    wget -q https://dist.ipfs.tech/kubo/v0.29.0/kubo_v0.29.0_linux-amd64.tar.gz && \
-    tar -xzf kubo_v0.29.0_linux-amd64.tar.gz && \
-    cd kubo && bash install.sh && \
-    cd .. && rm -rf kubo kubo_v0.29.0_linux-amd64.tar.gz && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# === Stage 1: builder ===
+FROM python:3.11-slim AS builder
 
-# Python dependencies
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+WORKDIR /build
+COPY requirements.txt ./
+RUN pip install --user --no-cache-dir -r requirements.txt
 
-# Code
+# === Stage 2: runtime ===
+FROM python:3.11-slim AS runtime
+
 WORKDIR /app
-COPY . .
 
-ENV PYTHONPATH=/app
+# Runtime libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Entrypoint for multi-container Docker
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
+# Copy pip packages from builder
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+# Copy application — все модули
+COPY phase0/ phase0/
+COPY sdk/ sdk/
+COPY relay/ relay/
+COPY adapters/ adapters/
+COPY coordination/ coordination/
+COPY depin/ depin/
+COPY pilot/ pilot/
+COPY cli.py pyproject.toml ./
+
+# Non-root user
+RUN useradd -m -u 1000 mesh && chown -R mesh:mesh /app
+USER mesh
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "from phase0.transport import P2PTransport; print('ok')" || exit 1
+
+# Default: show help
+CMD ["python", "cli.py", "--help"]

@@ -1,24 +1,25 @@
 """Phase 0 — TLS Transport Tests: handshake + encrypted pub/sub."""
 
 import asyncio
-import json
 import os
 import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from phase0.identity import Identity
 from phase0.handshake import (
-    SecureSession, server_handshake, client_handshake,
-    is_encrypted_envelope,
+    SecureSession,
+    client_handshake,
+    server_handshake,
 )
+from phase0.identity import Identity
 from phase0.transport import P2PTransport
-
 
 # ─────────────────────────────────────────────
 # Unit: SecureSession encrypt/decrypt roundtrip
 # ─────────────────────────────────────────────
+
 
 class TestSecureSession:
     def test_encrypt_decrypt_roundtrip(self):
@@ -60,6 +61,7 @@ class TestSecureSession:
 # Unit: Handshake protocol
 # ─────────────────────────────────────────────
 
+
 class TestHandshake:
     @pytest.mark.asyncio
     async def test_handshake_loopback(self):
@@ -85,9 +87,7 @@ class TestHandshake:
                 await asyncio.sleep(0.1)  # даём серверу стартовать
                 # Client
                 reader, writer = await asyncio.open_connection("127.0.0.1", port)
-                session = await client_handshake(
-                    reader, writer, client_ident
-                )
+                session = await client_handshake(reader, writer, client_ident)
                 assert session is not None, "Client handshake failed"
                 assert session.peer_pubkey_hex == server_ident.public_key_hex
                 writer.close()
@@ -125,8 +125,10 @@ class TestHandshake:
                 reader, writer = await asyncio.open_connection("127.0.0.1", port)
                 # Клиент с неправильным pubkey (не соответствует приватному ключу)
                 session = await client_handshake(
-                    reader, writer, client_ident,
-                    expected_server_pubkey="00" * 32  # неверный pubkey сервера
+                    reader,
+                    writer,
+                    client_ident,
+                    expected_server_pubkey="00" * 32,  # неверный pubkey сервера
                 )
                 assert session is None, "Ручкопожатие с неверным pubkey не должно пройти"
                 writer.close()
@@ -142,6 +144,7 @@ class TestHandshake:
 # Integration: TLS transport end-to-end
 # ─────────────────────────────────────────────
 
+
 class TestTLSTransport:
     @pytest.mark.asyncio
     async def test_tls_pub_sub(self):
@@ -155,16 +158,14 @@ class TestTLSTransport:
         received = []
 
         try:
-            pid_a = await transport_a.start("127.0.0.1", 0)
+            await transport_a.start("127.0.0.1", 0)
             port_a = transport_a._tcp_port
 
-            pid_b = await transport_b.start("127.0.0.1", 0)
+            await transport_b.start("127.0.0.1", 0)
 
             # B подключается к A
             transport_b._bootstrap_peers = [f"{ident_a.public_key_hex}@127.0.0.1:{port_a}"]
-            transport_b._start_reconnect_loop(
-                ident_a.public_key_hex, "127.0.0.1", port_a
-            )
+            transport_b._start_reconnect_loop(ident_a.public_key_hex, "127.0.0.1", port_a)
 
             await asyncio.sleep(1.5)  # ждём handshake + reconnect
 
@@ -194,16 +195,19 @@ class TestTLSTransport:
         transport_a = P2PTransport(node_id="tls_server", identity=ident, use_tls=True)
 
         try:
-            pid_a = await transport_a.start("127.0.0.1", 0)
+            await transport_a.start("127.0.0.1", 0)
             port_a = transport_a._tcp_port
 
             # Клиент подключается с неверным pubkey (другой identity)
             wrong_ident = Identity()
             reader, writer = await asyncio.open_connection("127.0.0.1", port_a)
             from phase0.handshake import client_handshake
+
             session = await client_handshake(
-                reader, writer, wrong_ident,
-                expected_server_pubkey="00" * 32  # false
+                reader,
+                writer,
+                wrong_ident,
+                expected_server_pubkey="00" * 32,  # false
             )
             assert session is None, "Handshake с неверным pubkey должен провалиться"
             writer.close()
@@ -217,6 +221,7 @@ class TestTLSTransport:
 # Backward compatibility: MESH_TLS=0
 # ─────────────────────────────────────────────
 
+
 class TestBackwardCompat:
     @pytest.mark.asyncio
     async def test_plain_tcp_still_works(self):
@@ -229,10 +234,10 @@ class TestBackwardCompat:
         received = []
 
         try:
-            pid_a = await transport_a.start("127.0.0.1", 0)
+            await transport_a.start("127.0.0.1", 0)
             port_a = transport_a._tcp_port
 
-            pid_b = await transport_b.start("127.0.0.1", 0)
+            await transport_b.start("127.0.0.1", 0)
 
             # Подключаем B к A
             transport_b._bootstrap_peers = [f"node_plain_a@127.0.0.1:{port_a}"]

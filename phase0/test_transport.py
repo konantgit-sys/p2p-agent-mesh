@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+
 import pytest
+
 from phase0.transport import P2PTransport
 
 
@@ -53,6 +55,7 @@ async def test_transport_pubsub_two_topics():
     def make_cb(idx):
         def cb(data):
             received[idx].append(data)
+
         return cb
 
     await transport.subscribe("t1-" + transport.peer_id[-4:], make_cb(1))

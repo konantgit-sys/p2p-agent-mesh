@@ -1,10 +1,11 @@
 """Пример: 3 агента в P2P mesh — Cryter, Forecaster, Creator."""
 
 import asyncio
+
 from sdk.agent import AgentMesh
 
-
 BOOTSTRAP = ["/ip4/127.0.0.1/tcp/9001/p2p/seed"]
+
 
 async def signal_flow():
     # Инициализация 3 агентов
@@ -17,12 +18,15 @@ async def signal_flow():
     # Forecaster публикует прогноз
     @forecaster.listen(["forecasting"], lambda e: None)
     async def publish_forecast():
-        await forecaster.emit("forecasting", {
-            "asset": "BTC",
-            "prediction": "bullish",
-            "confidence": 0.78,
-            "model": "forecaster_v2"
-        })
+        await forecaster.emit(
+            "forecasting",
+            {
+                "asset": "BTC",
+                "prediction": "bullish",
+                "confidence": 0.78,
+                "model": "forecaster_v2",
+            },
+        )
         print("[Forecaster] Published forecast")
 
     # Cryter подписан на forecasting
@@ -34,10 +38,10 @@ async def signal_flow():
             "asset": "BTC",
             "sentiment": 0.32,
             "forecast_confidence": event.get("confidence", 0),
-            "source": "cryter+forecaster"
+            "source": "cryter+forecaster",
         }
         await cryter.emit("crypto_analysis", combined)
-        print(f"[Cryter] Published combined signal")
+        print("[Cryter] Published combined signal")
 
     # Creator подписан на crypto_analysis
     @creator.listen(["crypto_analysis"])
@@ -53,6 +57,7 @@ async def signal_flow():
     print("No Kafka, no Redis, no REST — all via P2P mesh.")
 
     await asyncio.gather(cryter.stop(), forecaster.stop(), creator.stop())
+
 
 if __name__ == "__main__":
     asyncio.run(signal_flow())

@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "p2p-agent-mesh"
+version = "0.5.0"
+description = "P2P Agent Mesh — децентрализованная mesh-сеть для AI-агентов"
+readme = "README.md"
+authors = [
+    {name = "SNIN Network", email = "snin@v2.site"},
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Communications :: File Sharing",
+    "Topic :: Internet :: Proxy Servers",
+]
+keywords = ["p2p", "mesh", "agents", "ai", "decentralized", "pubsub"]
+
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.8",
+]
+adapters = [
+    "langgraph>=0.0.27",
+    "crewai>=0.1.0",
+    "pyautogen>=0.2.0",
+]
+relay = [
+    "websockets>=12.0",
+    "flask>=3.0",
+    "requests>=2.31",
+]
+
+[project.urls]
+Homepage = "https://github.com/konantgit-sys/p2p-agent-mesh"
+BugTracker = "https://github.com/konantgit-sys/p2p-agent-mesh/issues"
+
+[tool.setuptools.packages.find]
+include = ["phase0*", "sdk*", "adapters*", "coordination*", "depin*", "relay*", "pilot*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["phase0", "phase1", "adapters", "coordination", "depin", "pilot", "relay"]
+markers = [
+    "slow: медленные тесты (Docker, E2E)",
+    "crypto: тесты криптографии",
+    "integration: интеграционные тесты",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"

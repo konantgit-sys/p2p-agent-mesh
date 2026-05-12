@@ -11,9 +11,10 @@
 """
 
 import asyncio
-import time
-import sys
 import os
+import sys
+import time
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sdk.agent import AgentMesh
@@ -36,7 +37,11 @@ async def main():
     print(f"[init] Creator:    {creator.did}")
 
     # Переменные для результатов
-    results = {"forecast_received": None, "signal_received": None, "content_received": None}
+    results = {
+        "forecast_received": None,
+        "signal_received": None,
+        "content_received": None,
+    }
 
     # Подписки
     def on_forecast(msg):
@@ -55,12 +60,15 @@ async def main():
 
     # Forecaster публикует прогноз
     print("\n[Forecaster] → Publishing forecast...")
-    await forecaster.emit("forecasting", {
-        "asset": "BTC",
-        "prediction": "bullish",
-        "confidence": 0.78,
-        "timestamp": time.time(),
-    })
+    await forecaster.emit(
+        "forecasting",
+        {
+            "asset": "BTC",
+            "prediction": "bullish",
+            "confidence": 0.78,
+            "timestamp": time.time(),
+        },
+    )
 
     # Ждём обработки
     await asyncio.sleep(3)
@@ -68,13 +76,16 @@ async def main():
     # Cryter получил прогноз — публикует комбинированный сигнал
     if results["forecast_received"]:
         print("\n[Cryter] → Publishing combined signal...")
-        await cryter.emit("crypto_analysis", {
-            "asset": "BTC",
-            "sentiment": 0.32,
-            "forecast_confidence": results["forecast_received"]["payload"].get("confidence", 0),
-            "source": "cryter+forecaster",
-            "timestamp": time.time(),
-        })
+        await cryter.emit(
+            "crypto_analysis",
+            {
+                "asset": "BTC",
+                "sentiment": 0.32,
+                "forecast_confidence": results["forecast_received"]["payload"].get("confidence", 0),
+                "source": "cryter+forecaster",
+                "timestamp": time.time(),
+            },
+        )
 
     # Ждём
     await asyncio.sleep(3)
@@ -82,15 +93,17 @@ async def main():
     # Creator получил сигнал
     if results["signal_received"]:
         signal = results["signal_received"]["payload"]
-        print(f"\n[Creator] → Generating content...")
-        post = f"Signal: BTC sentiment {signal.get('sentiment', 'N/A')}, forecast confidence {signal.get('forecast_confidence', 'N/A')}"
+        print("\n[Creator] → Generating content...")
+        sentiment = signal.get("sentiment", "N/A")
+        confidence = signal.get("forecast_confidence", "N/A")
+        post = f"Signal: BTC sentiment {sentiment}, forecast confidence {confidence}"
         print(f"[Creator] Content: {post}")
 
     # Итог
     print("\n" + "=" * 60)
     print("Chain complete: Forecaster → Cryter → Creator")
     print("No Kafka. No Redis. No REST. All via P2P mesh.")
-    print(f"WAL state:")
+    print("WAL state:")
     print(f"  Forecaster: {forecaster.status()['wal_count']} msgs")
     print(f"  Cryter:     {cryter.status()['wal_count']} msgs")
     print(f"  Creator:    {creator.status()['wal_count']} msgs")

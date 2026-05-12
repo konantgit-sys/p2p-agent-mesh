@@ -1,4 +1,9 @@
+# Copyright 2026 SNIN Network <snin@v2.site>
+# SPDX-License-Identifier: MIT
+
 """Phase 0 — WAL: Write-Ahead Log на SQLite.
+
+
 
 Буферизирует все отправленные и полученные сообщения.
 При reconnect: replay с момента последнего коннекта.
@@ -6,10 +11,8 @@
 
 import json
 import sqlite3
-import time
 import threading
-from pathlib import Path
-from typing import Optional
+import time
 
 
 class WALBuffer:
@@ -58,6 +61,7 @@ class WALBuffer:
         msg_id = msg.get("id", "")
         if not msg_id:
             import hashlib
+
             raw = json.dumps(msg, sort_keys=True).encode()
             msg_id = hashlib.sha256(raw).hexdigest()[:16]
             msg["id"] = msg_id
@@ -76,28 +80,25 @@ class WALBuffer:
                     msg.get("signature", ""),
                     msg.get("pubkey", ""),
                     msg.get("ts", time.time()),
-                    time.time()
-                )
+                    time.time(),
+                ),
             )
             conn.commit()
         except Exception as e:
             print(f"[wal] append error: {e}")
         return msg_id
 
-    def replay(self, topic: str, since_id: Optional[str] = None,
-               limit: int = 1000) -> list[dict]:
+    def replay(self, topic: str, since_id: str | None = None, limit: int = 1000) -> list[dict]:
         """Воспроизвести сообщения по топику, опционально с ID."""
         conn = self._get_conn()
         if since_id:
-            row = conn.execute(
-                "SELECT ts FROM messages WHERE id = ?", (since_id,)
-            ).fetchone()
+            row = conn.execute("SELECT ts FROM messages WHERE id = ?", (since_id,)).fetchone()
             if row:
                 cursor = conn.execute(
                     """SELECT id, topic, sender, payload, signature, pubkey, ts
                        FROM messages WHERE topic = ? AND ts > ?
                        ORDER BY ts ASC LIMIT ?""",
-                    (topic, row[0], limit)
+                    (topic, row[0], limit),
                 )
             else:
                 return []
@@ -106,37 +107,35 @@ class WALBuffer:
                 """SELECT id, topic, sender, payload, signature, pubkey, ts
                    FROM messages WHERE topic = ?
                    ORDER BY ts ASC LIMIT ?""",
-                (topic, limit)
+                (topic, limit),
             )
         results = []
         for row in cursor.fetchall():
-            results.append({
-                "id": row[0],
-                "topic": row[1],
-                "from": row[2],
-                "payload": json.loads(row[3]) if row[3] else {},
-                "signature": row[4],
-                "pubkey": row[5],
-                "ts": row[6],
-            })
+            results.append(
+                {
+                    "id": row[0],
+                    "topic": row[1],
+                    "from": row[2],
+                    "payload": json.loads(row[3]) if row[3] else {},
+                    "signature": row[4],
+                    "pubkey": row[5],
+                    "ts": row[6],
+                }
+            )
         return results
 
     def prune(self, before_ts: float) -> int:
         """Удалить сообщения старше timestamp. Возвращает количество."""
         conn = self._get_conn()
-        cursor = conn.execute(
-            "DELETE FROM messages WHERE ts < ?", (before_ts,)
-        )
+        cursor = conn.execute("DELETE FROM messages WHERE ts < ?", (before_ts,))
         conn.commit()
         return cursor.rowcount
 
-    def count(self, topic: Optional[str] = None) -> int:
+    def count(self, topic: str | None = None) -> int:
         """Количество сообщений в WAL."""
         conn = self._get_conn()
         if topic:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM messages WHERE topic = ?", (topic,)
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM messages WHERE topic = ?", (topic,)).fetchone()
         else:
             row = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
         return row[0] if row else 0

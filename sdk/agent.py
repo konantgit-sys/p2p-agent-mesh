@@ -1,33 +1,41 @@
+# Copyright 2026 SNIN Network <snin@v2.site>
+# SPDX-License-Identifier: MIT
+
 """Agent-to-Agent SDK — high-level API поверх Phase 0 (IPFS PubSub + WAL + Identity + DHT).
+
+
 
 Агент может emit() события, listen() на события других агентов,
 query() по DHT, request() с ответом.
 """
 
 import asyncio
+import hashlib
 import json
 import time
-import hashlib
-from typing import Callable, Optional
+from collections.abc import Callable
 
-from phase0.transport import P2PTransport
-from phase0.wal import WALBuffer
+from phase0.dht import DHTStore
 from phase0.identity import Identity
 from phase0.sig_gate import SigGate
-from phase0.dht import DHTStore
+from phase0.transport import P2PTransport
+from phase0.wal import WALBuffer
+
+# RelayClient — опциональный импорт (только при использовании relay)
+try:
+    from relay.client import RelayClient  # type: ignore[import-untyped]
+except ImportError:
+    RelayClient = None  # type: ignore
 
 
 class Subscription:
     """Подписка на события с фильтром. Можно отписаться через .cancel()."""
 
-    def __init__(self, filter_dict: dict, callback: Callable,
-                 owner: "AgentMesh"):
+    def __init__(self, filter_dict: dict, callback: Callable, owner: "AgentMesh"):
         self.filter = filter_dict
         self.callback = callback
         self._owner = owner
-        self._id = hashlib.md5(
-            json.dumps(filter_dict, sort_keys=True).encode()
-        ).hexdigest()[:12]
+        self._id = hashlib.md5(json.dumps(filter_dict, sort_keys=True).encode()).hexdigest()[:12]
         self._cancelled = False
 
     def matches(self, msg: dict) -> bool:
@@ -68,30 +76,32 @@ class AgentMesh:
         await agent.stop()
     """
 
-    def __init__(self, agent_id: str, capabilities: list[str],
-                 identity: Optional[Identity] = None,
-                 db_path: Optional[str] = None,
-                 rate_limit: int = 50,
-                 port: int = 0,
-                 relay_host: Optional[str] = None,
-                 relay_port: int = 0):
+    def __init__(
+        self,
+        agent_id: str,
+        capabilities: list[str],
+        identity: Identity | None = None,
+        db_path: str | None = None,
+        rate_limit: int = 50,
+        port: int = 0,
+        relay_host: str | None = None,
+        relay_port: int = 0,
+    ):
         self.agent_id = agent_id
         self.capabilities = capabilities
         self.identity = identity or Identity()
         self.transport = P2PTransport(node_id=agent_id)
-        self.wal = WALBuffer(
-            db_path or f"/tmp/p2p_mesh_{agent_id}.db"
-        )
+        self.wal = WALBuffer(db_path or f"/tmp/p2p_mesh_{agent_id}.db")
         self.sig_gate = SigGate(rate_limit=rate_limit)
         self.dht = DHTStore(self.identity.did)
         self._port = port
         self._relay_host = relay_host
         self._relay_port = relay_port
-        self._relay: Optional["RelayClient"] = None
+        self._relay: RelayClient | None = None
         self._subscriptions: list[Subscription] = []
         self._subscribed_topics: set[str] = set()
         self._running = False
-        self._last_msg_id: Optional[str] = None
+        self._last_msg_id: str | None = None
         self._last_dht_repub: float = 0  # cooldown для DHT republish
 
     async def start(self) -> str:
@@ -102,6 +112,7 @@ class AgentMesh:
         # Если указан relay — подключаемся
         if self._relay_host and self._relay_port:
             from relay.client import RelayClient
+
             self._relay = RelayClient(
                 identity=self.identity,
                 relay_host=self._relay_host,
@@ -114,10 +125,7 @@ class AgentMesh:
             self._relay = None
 
         # Подписка на DHT топик (для discovery)
-        await self.transport.subscribe(
-            self.dht.get_topic(),
-            self._on_dht_msg
-        )
+        await self.transport.subscribe(self.dht.get_topic(), self._on_dht_msg)
         self._subscribed_topics.add(self.dht.get_topic())
 
         # Публикация своего профиля в DHT
@@ -141,10 +149,7 @@ class AgentMesh:
         msg = self.dht.put(dht_key, dht_value)
         signed = self.identity.sign_message(msg)
         self.wal.append(signed)
-        await self.transport.publish(
-            self.dht.get_topic(),
-            json.dumps(signed).encode()
-        )
+        await self.transport.publish(self.dht.get_topic(), json.dumps(signed).encode())
 
     async def _dht_republish_loop(self):
         """Периодическая републикация DHT метаданных."""
@@ -161,9 +166,11 @@ class AgentMesh:
         При получении от незнакомого пира — републикует свои метаданные.
         Это компенсирует отсутствие истории в gossipsub (late-joiners).
         """
-        import json, time
+        import json
+        import time
+
         try:
-            msg = json.loads(raw)
+            json.loads(raw)
         except json.JSONDecodeError:
             return
         # Верифицируем подпись
@@ -186,6 +193,7 @@ class AgentMesh:
         WAL append синхронный (SQLite).
         """
         import json
+
         try:
             msg = json.loads(data)
         except json.JSONDecodeError:
@@ -206,7 +214,10 @@ class AgentMesh:
         for sub in list(self._subscriptions):
             if sub.matches(msg):
                 try:
-                    sub.callback(msg)
+                    res = sub.callback(msg)
+                    # Если callback — async def, запускаем в event loop
+                    if asyncio.iscoroutine(res):
+                        asyncio.create_task(res)
                 except Exception as e:
                     print(f"[agent:{self.agent_id}] callback error: {e}")
 
@@ -240,8 +251,7 @@ class AgentMesh:
         await self.transport.publish(topic, json.dumps(signed).encode())
         return msg_id
 
-    async def listen(self, filter_dict: dict,
-                     callback: Callable) -> Subscription:
+    async def listen(self, filter_dict: dict, callback: Callable) -> Subscription:
         """Подписаться на события с фильтром.
 
         Args:
@@ -287,10 +297,19 @@ class AgentMesh:
         for topic in topics:
             # Проверяем, есть ли ещё подписки на этот топик
             active = any(
-                s is not None and not s._cancelled and
-                (s.filter.get("capability") == c or
-                 (isinstance(s.filter.get("capability"), list) and c in s.filter.get("capability")) or
-                 (isinstance(s.filter.get("capabilities"), list) and c in s.filter.get("capabilities")))
+                s is not None
+                and not s._cancelled
+                and (
+                    s.filter.get("capability") == c
+                    or (
+                        isinstance(s.filter.get("capability"), list)
+                        and c in s.filter.get("capability")
+                    )
+                    or (
+                        isinstance(s.filter.get("capabilities"), list)
+                        and c in s.filter.get("capabilities")
+                    )
+                )
                 for s in self._subscriptions
                 for c in ([caps] if isinstance(caps, str) else caps)
             )
@@ -298,8 +317,7 @@ class AgentMesh:
                 self._subscribed_topics.discard(topic)
                 await self.transport.unsubscribe(topic)
 
-    async def query(self, capability: str,
-                    min_reputation: float = 0.0) -> list[dict]:
+    async def query(self, capability: str, min_reputation: float = 0.0) -> list[dict]:
         """Поиск агентов по capability через DHT.
 
         Args:
@@ -323,16 +341,19 @@ class AgentMesh:
             caps = val.get("capabilities", [])
             rep = val.get("reputation", 0)
             if capability in caps and rep >= min_reputation:
-                results.append({
-                    "agent_id": val.get("agent_id", ""),
-                    "did": val.get("did", ""),
-                    "capabilities": caps,
-                    "reputation": rep,
-                })
+                results.append(
+                    {
+                        "agent_id": val.get("agent_id", ""),
+                        "did": val.get("did", ""),
+                        "capabilities": caps,
+                        "reputation": rep,
+                    }
+                )
         return results
 
-    async def request(self, target_capability: str, payload: dict,
-                      timeout: float = 30.0) -> Optional[dict]:
+    async def request(
+        self, target_capability: str, payload: dict, timeout: float = 30.0
+    ) -> dict | None:
         """Request-response через mesh.
 
         Отправляет запрос в топик request:{capability},
@@ -360,6 +381,7 @@ class AgentMesh:
         def on_reply_raw(raw: bytes):
             """Прямой callback из транспорта (минует agent: префикс)."""
             import json
+
             try:
                 reply_msg = json.loads(raw)
             except json.JSONDecodeError:
@@ -380,7 +402,7 @@ class AgentMesh:
         # Ждём ответ с таймаутом
         try:
             await asyncio.wait_for(response_event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await self.transport.unsubscribe(reply_to)
             self._subscribed_topics.discard(reply_to)
             return None
@@ -408,7 +430,7 @@ class AgentMesh:
         self.wal.append(signed)
         await self.transport.publish(reply_topic, json.dumps(signed).encode())
 
-    async def sync_on_reconnect(self, topics: Optional[list[str]] = None) -> int:
+    async def sync_on_reconnect(self, topics: list[str] | None = None) -> int:
         """Догнать пропущенные сообщения из WAL после reconnection.
 
         Args:
@@ -421,8 +443,7 @@ class AgentMesh:
             return 0
 
         count = 0
-        replay_topics = topics or [t for t in self._subscribed_topics
-                                   if t != self.dht.get_topic()]
+        replay_topics = topics or [t for t in self._subscribed_topics if t != self.dht.get_topic()]
         for topic in replay_topics:
             replayed = self.wal.replay(topic, since_id=self._last_msg_id)
             for msg in replayed:

@@ -1,16 +1,16 @@
 """Relay integration tests: E2E encrypted messaging через relay."""
 
 import asyncio
-import json
 import os
 import sys
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from phase0.identity import Identity
-from relay.server import RelayServer
 from relay.client import RelayClient
+from relay.server import RelayServer
 
 
 class TestRelay:
@@ -36,8 +36,7 @@ class TestRelay:
         await relay.start()
 
         ident = Identity()
-        client = RelayClient(ident, "127.0.0.1", relay.port,
-                             capabilities=["ping"])
+        client = RelayClient(ident, "127.0.0.1", relay.port, capabilities=["ping"])
 
         ok = await client.connect()
         assert ok, "Agent should connect to relay"
@@ -58,10 +57,8 @@ class TestRelay:
         ident_a = Identity()
         ident_b = Identity()
 
-        client_a = RelayClient(ident_a, "127.0.0.1", relay.port,
-                               capabilities=["cap_a"])
-        client_b = RelayClient(ident_b, "127.0.0.1", relay.port,
-                               capabilities=["cap_b"])
+        client_a = RelayClient(ident_a, "127.0.0.1", relay.port, capabilities=["cap_a"])
+        client_b = RelayClient(ident_b, "127.0.0.1", relay.port, capabilities=["cap_b"])
 
         ok_a = await client_a.connect()
         ok_b = await client_b.connect()
@@ -194,8 +191,7 @@ class TestRelay:
         assert len(intercepted) > 0, "Relay should intercept data"
         hex_data = intercepted[0]
         # hex_data — это encrypted blob. Не начинается с "supersecret"
-        assert "supersecret" not in hex_data, \
-            "Relay should NOT see plaintext in intercepted data"
+        assert "supersecret" not in hex_data, "Relay should NOT see plaintext in intercepted data"
 
         # Но B получил и расшифровал
         assert len(received) > 0, "B should receive"
@@ -222,8 +218,7 @@ class TestRelay:
         await asyncio.sleep(0.3)
 
         # A видит B
-        assert any(p["pubkey"] == ident_b.public_key_hex
-                   for p in client_a.peers())
+        assert any(p["pubkey"] == ident_b.public_key_hex for p in client_a.peers())
 
         # Отключаем B
         await client_b.stop()
@@ -231,10 +226,8 @@ class TestRelay:
 
         # A больше не видит B
         peers_a_after = client_a.peers()
-        b_in_peers = any(p["pubkey"] == ident_b.public_key_hex
-                         for p in peers_a_after)
-        assert not b_in_peers, \
-            f"B should be removed from peers after disconnect: {peers_a_after}"
+        b_in_peers = any(p["pubkey"] == ident_b.public_key_hex for p in peers_a_after)
+        assert not b_in_peers, f"B should be removed from peers after disconnect: {peers_a_after}"
 
         await client_a.stop()
         await relay.stop()
@@ -248,10 +241,10 @@ class TestRelay:
         ident_a = Identity()
         ident_b = Identity()
 
-        client_a = RelayClient(ident_a, "127.0.0.1", relay.port,
-                               capabilities=["forecast", "analysis"])
-        client_b = RelayClient(ident_b, "127.0.0.1", relay.port,
-                               capabilities=["ping"])
+        client_a = RelayClient(
+            ident_a, "127.0.0.1", relay.port, capabilities=["forecast", "analysis"]
+        )
+        client_b = RelayClient(ident_b, "127.0.0.1", relay.port, capabilities=["ping"])
 
         await client_a.connect()
         await client_b.connect()
@@ -324,6 +317,7 @@ class TestRelay:
 
         # Подключаемся без регистрации
         from phase0.handshake import client_handshake
+
         reader, writer = await asyncio.open_connection("127.0.0.1", relay.port)
         session = await client_handshake(reader, writer, ident)
         assert session is not None, "Handshake should succeed"

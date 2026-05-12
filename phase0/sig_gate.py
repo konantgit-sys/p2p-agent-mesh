@@ -1,4 +1,9 @@
+# Copyright 2026 SNIN Network <snin@v2.site>
+# SPDX-License-Identifier: MIT
+
 """Phase 0 — Sig Gate: верификация подписей + rate limiting + allowlist.
+
+
 
 Фильтрует входящие сообщения:
 1. Проверяет наличие подписи (signature, pubkey, from)
@@ -17,13 +22,17 @@ class SigGate:
     """Верификация подписей + rate limiting."""
 
     def __init__(self, rate_limit: int = 10, window: float = 1.0):
-        self.rate_limit = rate_limit          # макс сообщений в окне
-        self.window = window                  # окно в секундах
+        self.rate_limit = rate_limit  # макс сообщений в окне
+        self.window = window  # окно в секундах
         self._counters: dict[str, list[float]] = defaultdict(list)
         self._allowlist: set[str] | None = None  # None = все пропускаем
         self._denylist: set[str] = set()
-        self._stats = {"passed": 0, "rejected_rate": 0,
-                       "rejected_sig": 0, "rejected_deny": 0}
+        self._stats = {
+            "passed": 0,
+            "rejected_rate": 0,
+            "rejected_sig": 0,
+            "rejected_deny": 0,
+        }
 
     def set_allowlist(self, dids: list[str]):
         """Установить allowlist (только эти DID пропускаем)."""
@@ -50,6 +59,7 @@ class SigGate:
         Возвращает: dict сообщения если прошло, None если rejected.
         """
         import json
+
         try:
             msg = json.loads(raw_msg)
         except json.JSONDecodeError:

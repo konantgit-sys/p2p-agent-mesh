@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright 2026 SNIN Network <snin@v2.site>
+
 """LangGraph adapter — MeshChannel для multi-agent коммуникации через P2P mesh.
 
 Позволяет агентам на разных LangGraph-инстансах обмениваться событиями
@@ -12,8 +15,8 @@
 
 import asyncio
 import json
-import time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+
 from sdk.agent import AgentMesh
 
 
@@ -34,14 +37,13 @@ class MeshTopic:
         await topic.publish({"coin": "BTC", "price": 85000, "action": "BUY"})
     """
 
-    def __init__(self, mesh: AgentMesh, capability: str,
-                 max_buffer: int = 100):
+    def __init__(self, mesh: AgentMesh, capability: str, max_buffer: int = 100):
         self.mesh = mesh
         self.capability = capability
         self._buffer: list[dict] = []
         self._max_buffer = max_buffer
         self._callbacks: list[Callable] = []
-        self._subscription: Optional[object] = None
+        self._subscription: object | None = None
 
     async def publish(self, payload: dict) -> str:
         """Опубликовать событие в mesh через AgentMesh.emit()."""
@@ -49,7 +51,7 @@ class MeshTopic:
         self._buffer.append(payload)
         # Trim buffer
         if len(self._buffer) > self._max_buffer:
-            self._buffer = self._buffer[-self._max_buffer:]
+            self._buffer = self._buffer[-self._max_buffer :]
         return msg_id
 
     async def subscribe(self, callback: Callable):
@@ -57,19 +59,18 @@ class MeshTopic:
         self._callbacks.append(callback)
 
         if self._subscription is None:
+
             def route(msg: dict):
                 self._buffer.append(msg.get("payload", {}))
                 if len(self._buffer) > self._max_buffer:
-                    self._buffer = self._buffer[-self._max_buffer:]
+                    self._buffer = self._buffer[-self._max_buffer :]
                 for cb in self._callbacks:
                     try:
                         cb(msg)
                     except Exception as e:
                         print(f"[MeshTopic] callback error: {e}")
 
-            self._subscription = await self.mesh.listen(
-                {"capability": self.capability}, route
-            )
+            self._subscription = await self.mesh.listen({"capability": self.capability}, route)
 
     async def cancel(self):
         """Отписаться от топика."""
@@ -78,7 +79,7 @@ class MeshTopic:
             self._subscription = None
         self._callbacks.clear()
 
-    def get_latest(self) -> Optional[dict]:
+    def get_latest(self) -> dict | None:
         """Последнее полученное значение из буфера."""
         return self._buffer[-1] if self._buffer else None
 
@@ -114,7 +115,7 @@ class MeshStateSync:
         self.mesh = mesh
         self.namespace = namespace
         self._states: dict[str, dict] = {}
-        self._topic: Optional[MeshTopic] = None
+        self._topic: MeshTopic | None = None
 
     async def start(self):
         """Подписаться на обновления состояний других агентов."""
@@ -130,12 +131,14 @@ class MeshStateSync:
 
     async def update(self, state: dict):
         """Опубликовать своё состояние."""
-        await self._topic.publish({
-            "agent_id": self.mesh.agent_id,
-            "state": state,
-        })
+        await self._topic.publish(
+            {
+                "agent_id": self.mesh.agent_id,
+                "state": state,
+            }
+        )
 
-    def get_latest(self, agent_id: str) -> Optional[dict]:
+    def get_latest(self, agent_id: str) -> dict | None:
         """Получить последнее состояние другого агента."""
         return self._states.get(agent_id)
 
@@ -172,22 +175,26 @@ class MeshRPC:
 
     def on_request(self, method: str):
         """Декоратор для регистрации обработчика RPC."""
+
         def decorator(func):
             self._handlers[method] = func
             return func
+
         return decorator
 
-    async def request(self, method: str, params: dict,
-                      timeout: float = 30.0) -> Optional[dict]:
+    async def request(self, method: str, params: dict, timeout: float = 30.0) -> dict | None:
         """Отправить RPC-запрос другому агенту."""
-        return await self.mesh.request(method, {
-            "method": method,
-            "params": params,
-        }, timeout=timeout)
+        return await self.mesh.request(
+            method,
+            {
+                "method": method,
+                "params": params,
+            },
+            timeout=timeout,
+        )
 
     async def listen(self):
         """Запустить RPC-сервер — подписаться на входящие запросы."""
-        import json
 
         async def _handle_async(msg: dict, method: str):
             """Async часть обработчика."""
@@ -210,6 +217,7 @@ class MeshRPC:
                 return
             # Проверка подписи
             from phase0.identity import Identity
+
             if not Identity.verify(msg):
                 return
             method = msg.get("payload", {}).get("method", "")

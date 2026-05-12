@@ -1,4 +1,9 @@
+# Copyright 2026 SNIN Network <snin@v2.site>
+# SPDX-License-Identifier: MIT
+
 """Relay Client — подключение к relay ноде для NAT traversal.
+
+
 
 Agent → Relay (TLS) → Agent
 Сообщения E2E зашифрованы, relay не видит контент.
@@ -9,14 +14,16 @@ import json
 import os
 import random
 import sys
-from typing import Callable, Optional
+from collections.abc import Callable
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from phase0.identity import Identity
 from phase0.handshake import (
-    SecureSession, client_handshake, is_encrypted_envelope,
+    SecureSession,
+    client_handshake,
+    is_encrypted_envelope,
 )
+from phase0.identity import Identity
 
 
 class RelayClient:
@@ -41,15 +48,20 @@ class RelayClient:
         jitter = random.uniform(0.8, 1.2)  # ±20%
         return min(RelayClient.SOFTMAX_MAX, exp_delay * jitter)
 
-    def __init__(self, identity: Identity, relay_host: str, relay_port: int,
-                 capabilities: Optional[list[str]] = None):
+    def __init__(
+        self,
+        identity: Identity,
+        relay_host: str,
+        relay_port: int,
+        capabilities: list[str] | None = None,
+    ):
         self._identity = identity
         self._relay_host = relay_host
         self._relay_port = relay_port
         self._capabilities = capabilities or []
-        self._relay_session: Optional[SecureSession] = None
-        self._reader: Optional[asyncio.StreamReader] = None
-        self._writer: Optional[asyncio.StreamWriter] = None
+        self._relay_session: SecureSession | None = None
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
         self._running = False
         self._recv_callbacks: list[Callable] = []
         self._peers: list[dict] = []
@@ -74,19 +86,19 @@ class RelayClient:
             return False
 
         # Handshake с relay (mutual auth)
-        self._relay_session = await client_handshake(
-            self._reader, self._writer, self._identity
-        )
+        self._relay_session = await client_handshake(self._reader, self._writer, self._identity)
         if self._relay_session is None:
             print("[relay] Handshake with relay failed")
             return False
 
         # Register
-        await self._send({
-            "type": "register",
-            "pubkey": self._identity.public_key_hex,
-            "capabilities": self._capabilities,
-        })
+        await self._send(
+            {
+                "type": "register",
+                "pubkey": self._identity.public_key_hex,
+                "capabilities": self._capabilities,
+            }
+        )
 
         # Ждём registered + peers
         self._running = True
@@ -113,7 +125,7 @@ class RelayClient:
         """
         self._recv_callbacks.append(callback)
 
-    async def e2e_establish(self, target_pubkey: str) -> Optional[SecureSession]:
+    async def e2e_establish(self, target_pubkey: str) -> SecureSession | None:
         """Установить E2E сессию с целевым агентом через relay.
 
         1. A → Relay: e2e_init (с эфемерным X25519 ключом)
@@ -126,32 +138,36 @@ class RelayClient:
             return self._e2e_sessions[target_pubkey]
 
         # Генерируем эфемерный X25519 ключ
+        from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric.x25519 import (
             X25519PrivateKey,
         )
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-        from cryptography.hazmat.primitives import hashes, serialization
 
         eph_priv = X25519PrivateKey.generate()
-        eph_pub = eph_priv.public_key().public_bytes(
-            serialization.Encoding.Raw, serialization.PublicFormat.Raw
-        ).hex()
+        eph_pub = (
+            eph_priv.public_key()
+            .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+            .hex()
+        )
 
         # Создаём future для ожидания ответа
         future: asyncio.Future = asyncio.get_event_loop().create_future()
         self._e2e_pending[target_pubkey] = future
 
         # Отправляем e2e_init
-        await self._send({
-            "type": "e2e_init",
-            "target": target_pubkey,
-            "eph_pub": eph_pub,
-        })
+        await self._send(
+            {
+                "type": "e2e_init",
+                "target": target_pubkey,
+                "eph_pub": eph_pub,
+            }
+        )
 
         # Ждём e2e_ready (timeout 15 сек)
         try:
             peer_eph_pub_hex = await asyncio.wait_for(future, 15.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._e2e_pending.pop(target_pubkey, None)
             return None
         finally:
@@ -161,6 +177,7 @@ class RelayClient:
         from cryptography.hazmat.primitives.asymmetric.x25519 import (
             X25519PublicKey,
         )
+
         peer_raw = bytes.fromhex(peer_eph_pub_hex)
         peer_pub = X25519PublicKey.from_public_bytes(peer_raw)
         shared = eph_priv.exchange(peer_pub)
@@ -197,11 +214,13 @@ class RelayClient:
         encrypted = e2e.encrypt(data)
         encrypted_hex = encrypted.hex()
 
-        await self._send({
-            "type": "send",
-            "target": target_pubkey,
-            "data": encrypted_hex,
-        })
+        await self._send(
+            {
+                "type": "send",
+                "target": target_pubkey,
+                "data": encrypted_hex,
+            }
+        )
         return True
 
     def peers(self) -> list[dict]:
@@ -216,16 +235,19 @@ class RelayClient:
         peer_eph_pub = msg["eph_pub"]
 
         # Генерируем свой эфемерный ключ
+        from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric.x25519 import (
-            X25519PrivateKey, X25519PublicKey,
+            X25519PrivateKey,
+            X25519PublicKey,
         )
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-        from cryptography.hazmat.primitives import hashes, serialization
 
         eph_priv = X25519PrivateKey.generate()
-        eph_pub_hex = eph_priv.public_key().public_bytes(
-            serialization.Encoding.Raw, serialization.PublicFormat.Raw
-        ).hex()
+        eph_pub_hex = (
+            eph_priv.public_key()
+            .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+            .hex()
+        )
 
         # Вычисляем E2E session key
         peer_raw = bytes.fromhex(peer_eph_pub)
@@ -247,11 +269,15 @@ class RelayClient:
         self._e2e_sessions[from_pubkey] = e2e
 
         # Отправляем e2e_accept обратно через relay
-        asyncio.create_task(self._send({
-            "type": "e2e_accept",
-            "target": from_pubkey,
-            "eph_pub": eph_pub_hex,
-        }))
+        asyncio.create_task(
+            self._send(
+                {
+                    "type": "e2e_accept",
+                    "target": from_pubkey,
+                    "eph_pub": eph_pub_hex,
+                }
+            )
+        )
 
     async def _read_loop(self):
         """Фоновый цикл чтения сообщений от relay.
