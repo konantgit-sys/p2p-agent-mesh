@@ -23,14 +23,15 @@ AP модель (availability + partition tolerance). Eventual consistency.
 > Для сценариев: A2A сигналы между AI-агентами, IoT телеметрия, event-driven координация.
 > Для ordered streaming — Kafka/RabbitMQ.
 
-## Status — v0.2.0
+## Status — v0.5.0 (stable)
 
 | Компонент | Статус | Тесты |
 |-----------|--------|-------|
-| **Phase 0 — Core Transport** (IPFS PubSub, WAL, Ed25519, SigGate, DHT) | ✅ v0.2 | 24/24 |
-| **Phase 1 — Agent SDK** (emit/listen/query/request, DHT discovery) | ✅ v0.2 | 5/5 |
-| **LangGraph adapter** (MeshTopic, MeshStateSync, MeshRPC) | ✅ v0.2 | 3/3 |
-| **ИТОГО** | **32/32 тестов** | |
+| **Phase 0 — Core Transport** (IPFS PubSub, WAL, Ed25519, SigGate, DHT) | ✅ v0.5 | 32/32 |
+| **Phase 1 — Agent SDK** (emit/listen/query/request, DHT discovery, reputation) | ✅ v0.5 | 7/7 |
+| **LangGraph adapter** (MeshTopic, MeshStateSync, MeshRPC) | ✅ v0.5 | 3/3 |
+| **Phase 3 — DHT + Reputation + Redundancy** | ✅ v0.5 | 13/13 |
+| **ИТОГО** | **45/45 тестов** | |
 
 ## Quickstart
 
