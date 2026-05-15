@@ -60,16 +60,18 @@ def main():
             sys.exit(1)
 
         print(f"[cli] Agent started. DID: {agent.did}")
-        port_str = str(agent.transport.port) if hasattr(agent, "transport") else "N/A"
+        port_str = str(agent.transport._tcp_port) if hasattr(agent, "transport") else "N/A"
         print(f"[cli] Listening on port: {port_str}")
 
         if args.listen:
 
-            @agent.listen(capabilities=capabilities)
+            caps = {"capability": capabilities} if len(capabilities) == 1 else {"capabilities": capabilities}
+
             async def on_event(event):
                 print(f"[{args.agent}] Received: {event}")
 
-            print(f"[cli] Listening for capabilities: {capabilities}")
+            sub = await agent.listen(caps, on_event)
+            print(f"[cli] Listening for capabilities: {capabilities} (sub={sub._id})")
         else:
             # В режиме публикатора — просто шлём раз в 10 сек
             async def publish_loop():
