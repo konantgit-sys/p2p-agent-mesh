@@ -47,7 +47,7 @@ class P2PTransport:
         bootstrap_peers: list[str] | None = None,
         identity: Identity | None = None,
         use_tls: bool = False,
-    ):
+    ) -> None:
         self.node_id = node_id or f"node_{uuid.uuid4().hex[:8]}"
         self._subscribed_topics: set[str] = set()
         self._running = False
@@ -69,7 +69,7 @@ class P2PTransport:
         # TLS sessions (peer_pubkey_prefix -> SecureSession)
         self._tls_sessions: dict[str, SecureSession] = {}
 
-    async def start(self, host: str = "127.0.0.1", port: int = 0):
+    async def start(self, host: str = "127.0.0.1", port: int = 0) -> str | None:
         """Запустить транспорт + TCP сервер на host:port (0 = случайный)."""
         self._running = True
         self.peer_id = f"did:p2p:{self.node_id}"
@@ -149,7 +149,7 @@ class P2PTransport:
         tcp_peers = set(self._tcp_connections.keys())
         return sorted(local | tcp_peers)
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Остановить транспорт."""
         self._running = False
 
@@ -179,7 +179,7 @@ class P2PTransport:
 
     # ───────────────────────── TCP Server ─────────────────────────
 
-    async def _handle_tcp_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def _handle_tcp_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Обработчик входящего TCP соединения."""
         peer_addr = writer.get_extra_info("peername")
         peer_id = f"tcp:{peer_addr[0]}:{peer_addr[1]}"
@@ -275,11 +275,11 @@ class P2PTransport:
         except (ValueError, IndexError):
             return None
 
-    def _start_reconnect_loop(self, peer_id: str, host: str, port: int):
+    def _start_reconnect_loop(self, peer_id: str, host: str, port: int) -> None:
         task = asyncio.create_task(self._reconnect_loop(peer_id, host, port))
         self._reconnect_tasks[peer_id] = task
 
-    async def _reconnect_loop(self, peer_id: str, host: str, port: int):
+    async def _reconnect_loop(self, peer_id: str, host: str, port: int) -> None:
         """Цикл переподключения с exponential backoff + TLS handshake."""
         delay = 1.0
         max_delay = 30.0
@@ -366,7 +366,7 @@ class P2PTransport:
 
     # ───────────────────────── TCP helpers ─────────────────────────
 
-    async def _tcp_broadcast(self, topic: str, payload: bytes):
+    async def _tcp_broadcast(self, topic: str, payload: bytes) -> None:
         """Разослать сообщение всем TCP пирам."""
         if not self._tcp_connections:
             return
@@ -393,7 +393,7 @@ class P2PTransport:
             except Exception:
                 pass
 
-    async def _tcp_notify_sub(self, topic: str):
+    async def _tcp_notify_sub(self, topic: str) -> None:
         """Уведомить TCP пиров о подписке."""
         msg = {"type": "sub", "topic": topic, "from": self.node_id}
         for conn_peer_id, writer in self._tcp_connections.items():
@@ -402,7 +402,7 @@ class P2PTransport:
             except Exception:
                 pass
 
-    async def _tcp_notify_unsub(self, topic: str):
+    async def _tcp_notify_unsub(self, topic: str) -> None:
         """Уведомить TCP пиров об отписке."""
         msg = {"type": "unsub", "topic": topic, "from": self.node_id}
         for conn_peer_id, writer in self._tcp_connections.items():
@@ -414,7 +414,7 @@ class P2PTransport:
     @staticmethod
     async def _tcp_send(
         writer: asyncio.StreamWriter, msg: dict, session: SecureSession | None = None
-    ):
+    ) -> None:
         """Отправить JSON сообщение в TCP сокет."""
         if session:
             msg = session.pack_encrypted(msg)
@@ -422,7 +422,7 @@ class P2PTransport:
         writer.write(encoded.encode())
         await writer.drain()
 
-    async def _deliver_local(self, topic: str, payload: bytes):
+    async def _deliver_local(self, topic: str, payload: bytes) -> None:
         """Доставить сообщение в in-memory bus."""
         if not payload.endswith(b"\n"):
             payload = payload + b"\n"
