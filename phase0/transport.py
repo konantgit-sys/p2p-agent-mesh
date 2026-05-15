@@ -47,7 +47,8 @@ class P2PTransport:
         bootstrap_peers: list[str] | None = None,
         identity: Identity | None = None,
         use_tls: bool = False,
-    ) -> None:
+        relay: bool = False,
+    ):
         self.node_id = node_id or f"node_{uuid.uuid4().hex[:8]}"
         self._subscribed_topics: set[str] = set()
         self._running = False
@@ -56,6 +57,9 @@ class P2PTransport:
         # TLS / Identity
         self._identity = identity or Identity()
         self._use_tls = use_tls
+
+        # Relay mode — форвардить полученные сообщения всем TCP пирам
+        self._relay = relay
 
         # TCP слой
         self._tcp_server: asyncio.Server | None = None
@@ -69,7 +73,7 @@ class P2PTransport:
         # TLS sessions (peer_pubkey_prefix -> SecureSession)
         self._tls_sessions: dict[str, SecureSession] = {}
 
-    async def start(self, host: str = "127.0.0.1", port: int = 0) -> str | None:
+    async def start(self, host: str = "127.0.0.1", port: int = 0):
         """Запустить транспорт + TCP сервер на host:port (0 = случайный)."""
         self._running = True
         self.peer_id = f"did:p2p:{self.node_id}"
@@ -112,12 +116,14 @@ class P2PTransport:
     async def subscribe(self, topic: str, callback: Callable) -> None:
         """Подписаться на топик."""
         if topic in self._subscribed_topics:
+            print(f"[transport] subscribe SKIP {topic} (already in {self._subscribed_topics})")
             return
         self._subscribed_topics.add(topic)
         async with _bus_lock:
             if topic not in _bus:
                 _bus[topic] = []
             _bus[topic].append((self.node_id, callback))
+            print(f"[transport] subscribe ADDED {topic} to _bus (now {len(_bus[topic])} subs, _bus keys: {list(_bus.keys())})")
         print(f"[transport] Subscribed to {topic}")
 
         # Уведомить TCP пиров
@@ -149,7 +155,7 @@ class P2PTransport:
         tcp_peers = set(self._tcp_connections.keys())
         return sorted(local | tcp_peers)
 
-    async def stop(self) -> None:
+    async def stop(self):
         """Остановить транспорт."""
         self._running = False
 
@@ -179,7 +185,7 @@ class P2PTransport:
 
     # ───────────────────────── TCP Server ─────────────────────────
 
-    async def _handle_tcp_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle_tcp_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Обработчик входящего TCP соединения."""
         peer_addr = writer.get_extra_info("peername")
         peer_id = f"tcp:{peer_addr[0]}:{peer_addr[1]}"
@@ -196,6 +202,32 @@ class P2PTransport:
             peer_id = f"tls:{session.peer_pubkey_hex[:16]}"
             self._tls_sessions[session.peer_pubkey_hex[:16]] = session
             print(f"[transport] TLS peer authenticated: {peer_id}")
+
+        # P2P hello handshake (простой обмен peer_id)
+        if not self._use_tls:
+            try:
+                hello_line = await asyncio.wait_for(reader.readline(), timeout=3.0)
+                if hello_line:
+                    try:
+                        hello = json.loads(hello_line.decode().strip())
+                        if hello.get("type") == "hello":
+                            remote_peer = hello.get("peer_id", hello.get("node_id", ""))
+                            if remote_peer:
+                                old_id = peer_id
+                                peer_id = remote_peer
+                                print(f"[transport] Client identified: {remote_peer} (was {old_id})")
+                    except json.JSONDecodeError:
+                        pass
+                # Ответное hello
+                resp_hello = {
+                    "type": "hello",
+                    "node_id": self.node_id,
+                    "peer_id": self.peer_id,
+                }
+                writer.write((json.dumps(resp_hello, separators=(",", ":")) + "\n").encode())
+                await writer.drain()
+            except asyncio.TimeoutError:
+                print(f"[transport] No hello from {peer_addr} (timeout)")
 
         # Сохраняем соединение
         self._tcp_connections[peer_id] = writer
@@ -234,6 +266,10 @@ class P2PTransport:
                         payload = base64.b64decode(payload_b64)
                         await self._deliver_local(topic, payload)
 
+                        # Relay mode — форвард другим TCP пирам
+                        if self._relay and len(self._tcp_connections) > 1:
+                            await self._tcp_broadcast(topic, payload, exclude_peer=peer_id)
+
                     elif msg_type == "sub":
                         pass
 
@@ -264,6 +300,16 @@ class P2PTransport:
             except Exception:
                 pass
 
+    async def _tcp_recv_hello(self, reader: asyncio.StreamReader, timeout: float = 3.0) -> dict | None:
+        """Прочитать hello от сервера."""
+        try:
+            line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+            if line:
+                return json.loads(line.decode().strip())
+        except (asyncio.TimeoutError, json.JSONDecodeError):
+            pass
+        return None
+
     # ───────────────────────── TCP Client ─────────────────────────
 
     def _parse_peer_spec(self, spec: str) -> tuple[str, str, int] | None:
@@ -275,11 +321,11 @@ class P2PTransport:
         except (ValueError, IndexError):
             return None
 
-    def _start_reconnect_loop(self, peer_id: str, host: str, port: int) -> None:
+    def _start_reconnect_loop(self, peer_id: str, host: str, port: int):
         task = asyncio.create_task(self._reconnect_loop(peer_id, host, port))
         self._reconnect_tasks[peer_id] = task
 
-    async def _reconnect_loop(self, peer_id: str, host: str, port: int) -> None:
+    async def _reconnect_loop(self, peer_id: str, host: str, port: int):
         """Цикл переподключения с exponential backoff + TLS handshake."""
         delay = 1.0
         max_delay = 30.0
@@ -315,6 +361,19 @@ class P2PTransport:
                 peer_id = new_peer_id
                 delay = 1.0
 
+                # Отправить hello + peer_id
+                await self._tcp_send(
+                    writer,
+                    {"type": "hello", "node_id": self.node_id, "peer_id": self.peer_id},
+                    session,
+                )
+                resp = await self._tcp_recv_hello(reader)
+                if resp and resp.get("type") == "hello":
+                    remote_peer = resp.get("peer_id", resp.get("node_id", ""))
+                    if remote_peer and remote_peer != peer_id:
+                        print(f"[transport] Server identified as: {remote_peer}")
+                        new_peer_id = remote_peer
+
                 # Отправить текущие подписки
                 for topic in self._subscribed_topics:
                     await self._tcp_send(
@@ -338,6 +397,9 @@ class P2PTransport:
                         if msg.get("type") == "pub":
                             payload = base64.b64decode(msg["data"])
                             await self._deliver_local(msg["topic"], payload)
+                            # Relay mode — форвард другим TCP пирам
+                            if self._relay and len(self._tcp_connections) > 1:
+                                await self._tcp_broadcast(msg["topic"], payload, exclude_peer=peer_id)
                         elif msg.get("type") == "ping":
                             pong = {"type": "pong"}
                             await self._tcp_send(writer, pong, session)
@@ -366,8 +428,8 @@ class P2PTransport:
 
     # ───────────────────────── TCP helpers ─────────────────────────
 
-    async def _tcp_broadcast(self, topic: str, payload: bytes) -> None:
-        """Разослать сообщение всем TCP пирам."""
+    async def _tcp_broadcast(self, topic: str, payload: bytes, exclude_peer: str | None = None):
+        """Разослать сообщение всем TCP пирам (опционально — исключая одного)."""
         if not self._tcp_connections:
             return
         msg = {
@@ -380,6 +442,8 @@ class P2PTransport:
         data_bytes = encoded.encode()
 
         for conn_peer_id, writer in list(self._tcp_connections.items()):
+            if exclude_peer and conn_peer_id == exclude_peer:
+                continue
             try:
                 # Если есть TLS сессия для этого пира — шифруем
                 session = self._get_session_for_peer(conn_peer_id)
@@ -393,7 +457,7 @@ class P2PTransport:
             except Exception:
                 pass
 
-    async def _tcp_notify_sub(self, topic: str) -> None:
+    async def _tcp_notify_sub(self, topic: str):
         """Уведомить TCP пиров о подписке."""
         msg = {"type": "sub", "topic": topic, "from": self.node_id}
         for conn_peer_id, writer in self._tcp_connections.items():
@@ -402,7 +466,7 @@ class P2PTransport:
             except Exception:
                 pass
 
-    async def _tcp_notify_unsub(self, topic: str) -> None:
+    async def _tcp_notify_unsub(self, topic: str):
         """Уведомить TCP пиров об отписке."""
         msg = {"type": "unsub", "topic": topic, "from": self.node_id}
         for conn_peer_id, writer in self._tcp_connections.items():
@@ -414,7 +478,7 @@ class P2PTransport:
     @staticmethod
     async def _tcp_send(
         writer: asyncio.StreamWriter, msg: dict, session: SecureSession | None = None
-    ) -> None:
+    ):
         """Отправить JSON сообщение в TCP сокет."""
         if session:
             msg = session.pack_encrypted(msg)
@@ -422,12 +486,15 @@ class P2PTransport:
         writer.write(encoded.encode())
         await writer.drain()
 
-    async def _deliver_local(self, topic: str, payload: bytes) -> None:
+    async def _deliver_local(self, topic: str, payload: bytes):
         """Доставить сообщение в in-memory bus."""
         if not payload.endswith(b"\n"):
             payload = payload + b"\n"
         async with _bus_lock:
-            for subscriber_id, callback in _bus.get(topic, []):
+            subs = _bus.get(topic, [])
+            if not subs:
+                print(f"[transport] bus: no subs for '{topic}' (keys: {list(_bus.keys())[:6]})")
+            for subscriber_id, callback in subs:
                 try:
                     callback(payload)
                 except Exception as e:
