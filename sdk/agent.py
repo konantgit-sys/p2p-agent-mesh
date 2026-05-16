@@ -162,50 +162,29 @@ class AgentMesh:
 
     def _on_dht_msg(self, raw: bytes):
         """Обработчик DHT сообщений (репликация каталога агентов).
+
+        При получении от незнакомого пира — републикует свои метаданные.
+        Это компенсирует отсутствие истории в gossipsub (late-joiners).
         """
         import json
         import time
 
-        debug = f"DHT raw ({len(raw)}b): {raw.decode(errors='replace')[:200]}"
-
-        # Парсим raw
         try:
-            msg = json.loads(raw)
+            json.loads(raw)
         except json.JSONDecodeError:
-            print(f"[agent] DHT JSON decode error: {debug}")
             return
-
-        # Пробуем через sig_gate (подписанные)
+        # Верифицируем подпись
         checked = self.sig_gate.check(raw)
         if checked is not None:
             sender_did = checked.get("from", "")
+            # Если это не наше сообщение — реплицируем
             if sender_did != self.identity.did:
                 self.dht.handle_message(checked)
-                print(f"[agent] DHT accepted (signed): {sender_did}")
-            return
-
-        # Если sig_gate отклонил — пробуем как неподписанное
-        # msg может быть {"topic":"_dht","payload":{...}} или чистый payload
-        payload = msg.get("payload", msg)
-        # sender из value.agent_id (с добавлением -agent) или из payload.value.peer_id
-        value = payload.get("value", {})
-        sender = (
-            value.get("peer_id")  # "did:p2p:cryter-agent"
-            or value.get("agent_id", "") + "-agent"  # "cryter" → "cryter-agent"
-            or msg.get("from")
-        )
-        trusted = ["cryter-agent", "forecaster-agent", "archivist-agent", "mesh-connector", "relay-mesh-bridge", "agent_a-agent", "agent_b-agent"]
-        # Проверка по содержимому в peer_id
-        sender_short = sender.replace("did:p2p:", "") if sender else "?"
-        if sender_short in trusted or sender in trusted:
-            self.dht.handle_message(msg)
-            now = time.time()
-            if now - self._last_dht_repub > 1.0:
-                self._last_dht_repub = now
-                asyncio.create_task(self._publish_metadata())
-            print(f"[agent] DHT accepted (unsigned, trusted): {sender}")
-        else:
-            print(f"[agent] DHT rejected (unsigned, untrusted): sender={sender}")
+                # Republish свои метаданные для late-joiners (с cooldown)
+                now = time.time()
+                if now - self._last_dht_repub > 1.0:
+                    self._last_dht_repub = now
+                    asyncio.create_task(self._publish_metadata())
 
     def _route_message(self, topic: str, data: bytes):
         """Принять сырое сообщение из транспорта, проверить, разослать подписчикам.
