@@ -194,7 +194,7 @@ class AgentMesh:
             or value.get("agent_id", "") + "-agent"  # "cryter" → "cryter-agent"
             or msg.get("from")
         )
-        trusted = ["cryter-agent", "forecaster-agent", "archivist-agent", "mesh-connector", "relay-mesh-bridge", "agent-1", "agent-2"]
+        trusted = ["cryter-agent", "forecaster-agent", "archivist-agent", "mesh-connector", "relay-mesh-bridge", "agent_a-agent", "agent_b-agent"]
         # Проверка по содержимому в peer_id
         sender_short = sender.replace("did:p2p:", "") if sender else "?"
         if sender_short in trusted or sender in trusted:
